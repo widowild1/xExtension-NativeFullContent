@@ -1,13 +1,14 @@
 <?php
 
+// Recherche de l'autoloader local ou parent
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
+} elseif (file_exists(dirname(__DIR__) . '/vendor/autoload.php')) {
+    require_once dirname(__DIR__) . '/vendor/autoload.php';
 }
+
 require_once __DIR__ . '/lib/RuleLoader.php';
 require_once __DIR__ . '/lib/SelectorExtractor.php';
-
-use FiveFilters\Readability\Readability;
-use FiveFilters\Readability\Configuration;
 
 final class NativeFullContentExtension extends Minz_Extension {
 
@@ -41,7 +42,7 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function handleConfigureAction(): void {
         $this->registerTranslates();
 
-        // 1. Prise en charge directe de l'action AJAX du banc d'essai
+        // Prise en charge du banc d'essai AJAX
         if (Minz_Request::isPost() && Minz_Request::param('ajax_action') === 'test') {
             header('Content-Type: application/json; charset=UTF-8');
 
@@ -76,7 +77,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             exit;
         }
 
-        // 2. Enregistrement classique des paramètres de configuration
+        // Sauvegarde des options
         if (Minz_Request::isPost()) {
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -155,12 +156,12 @@ final class NativeFullContentExtension extends Minz_Extension {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la requête HTTP (connexion bloquée, code HTTP >= 400 ou timeout).';
+                $debugInfo['error'] = 'Échec de la requête HTTP (serveur distant inaccessible ou timeout).';
             }
             return null;
         }
 
-        // 1. Analyse par règle spécifique de domaine
+        // 1. Priorité aux règles personnalisées par domaine (rules/*.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -179,21 +180,38 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Repli sur FiveFilters Readability
-        if (class_exists('FiveFilters\Readability\Readability')) {
-            try {
-                $config = new Configuration();
-                $config->setFixRelativeURLs(true);
-                $config->setOriginalURL($url);
+        // 2. Détection dynamique de la classe Readability disponible
+        $readabilityClass = null;
+        $configClass = null;
 
-                $readability = new Readability($config);
+        if (class_exists('FiveFilters\Readability\Readability')) {
+            $readabilityClass = 'FiveFilters\Readability\Readability';
+            $configClass = 'FiveFilters\Readability\Configuration';
+        } elseif (class_exists('andreskrey\Readability\Readability')) {
+            $readabilityClass = 'andreskrey\Readability\Readability';
+            $configClass = 'andreskrey\Readability\Configuration';
+        }
+
+        if ($readabilityClass !== null && $configClass !== null) {
+            try {
+                $config = new $configClass();
+                if (method_exists($config, 'setFixRelativeURLs')) {
+                    $config->setFixRelativeURLs(true);
+                }
+                if (method_exists($config, 'setOriginalURL')) {
+                    $config->setOriginalURL($url);
+                }
+
+                $readability = new $readabilityClass($config);
                 if ($readability->parse($html)) {
                     $content = $readability->getContent();
                     $content = SelectorExtractor::extract($content, $url, 'body');
 
                     if ($debugInfo !== null) {
-                        $debugInfo['engine'] = 'FiveFilters Readability (Algorithme heuristique)';
-                        $debugInfo['title'] = $readability->getTitle();
+                        $debugInfo['engine'] = 'Readability (' . $readabilityClass . ')';
+                        if (method_exists($readability, 'getTitle')) {
+                            $debugInfo['title'] = $readability->getTitle();
+                        }
                     }
                     return $content;
                 }
@@ -204,7 +222,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         } else {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Le dossier vendor/ est manquant sur le serveur. Lancez "composer require fivefilters/readability.php" dans le dossier de l\'extension.';
+                $debugInfo['error'] = 'La librairie Readability n\'a pas pu être instanciée. Vérifiez la présence du dossier vendor/.';
             }
         }
 
