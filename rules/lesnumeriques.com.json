@@ -1,0 +1,4 @@
+{
+  "content": "article.article, div[itemprop='articleBody']",
+  "strip": ".adv, .ads, .social-share, .author-block"
+}
