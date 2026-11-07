@@ -1,0 +1,46 @@
+.native-fullcontent-header-bar {
+    margin-bottom: 15px;
+    padding: 6px 10px;
+    background: #f7f9fa;
+    border-left: 3px solid #0066cc;
+    border-radius: 3px;
+}
+
+.native-btn-fetch {
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.native-badge-success {
+    display: inline-block;
+    padding: 3px 8px;
+    background-color: #e6f4ea;
+    color: #137333;
+    border: 1px solid #ceead6;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.native-test-card {
+    background: #ffffff;
+    border: 1px solid #dcdcdc;
+    border-radius: 5px;
+    padding: 12px;
+    margin-top: 10px;
+}
+
+.native-test-card.error {
+    background: #fde8e8;
+    color: #c81e1e;
+    border-color: #f8b4b4;
+}
+
+.native-preview-box {
+    margin-top: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 15px;
+    border-radius: 4px;
+}
