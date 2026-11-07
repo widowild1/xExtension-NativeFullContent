@@ -12,7 +12,7 @@ use FiveFilters\Readability\Configuration;
 final class NativeFullContentExtension extends Minz_Extension {
 
     private ?RuleLoader $ruleLoader = null;
-    /** @var array<string, string> Cache catégorie */
+    /** @var array<string, string> Cache catégorie feedId => categoryId */
     private array $feedCategoryCache = [];
 
     #[\Override]
@@ -33,19 +33,27 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerTranslates();
 
         if (Minz_Request::isPost()) {
-            $scopeMode = Minz_Request::paramString('scope_mode', 'feed');
+            $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
                 $scopeMode = 'feed';
             }
 
-            $enabledCategories = Minz_Request::paramArray('enabled_categories', []);
-            $enabledFeeds = Minz_Request::paramArray('enabled_feeds', []);
-            $userAgent = Minz_Request::paramString('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            $enabledCategories = Minz_Request::param('enabled_categories', []);
+            if (!is_array($enabledCategories)) {
+                $enabledCategories = [];
+            }
+
+            $enabledFeeds = Minz_Request::param('enabled_feeds', []);
+            if (!is_array($enabledFeeds)) {
+                $enabledFeeds = [];
+            }
+
+            $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
             $timeout = (int) Minz_Request::param('timeout', 15);
 
             $this->setUserConfigurationValue('scope_mode', $scopeMode);
-            $this->setUserConfigurationValue('enabled_categories', $enabledCategories);
-            $this->setUserConfigurationValue('enabled_feeds', $enabledFeeds);
+            $this->setUserConfigurationValue('enabled_categories', array_map('strval', $enabledCategories));
+            $this->setUserConfigurationValue('enabled_feeds', array_map('strval', $enabledFeeds));
             $this->setUserConfigurationValue('user_agent', $userAgent);
             $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 15);
         }
@@ -71,6 +79,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
+        // 1. Détection de règle par domaine
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -86,6 +95,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
+        // 2. Repli automatique sur FiveFilters Readability
         if (class_exists('FiveFilters\Readability\Readability')) {
             try {
                 $config = new Configuration();
@@ -123,15 +133,15 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
 
             $catId = $this->getFeedCategoryId($feedId);
-            return $catId !== null && in_array($catId, $enabledCategories, true);
+            return $catId !== null && in_array((string)$catId, array_map('strval', $enabledCategories), true);
         }
 
         $enabledFeeds = $this->getUserConfigurationValue('enabled_feeds');
-        if (!is_array($enabledFeeds)) {
+        if (!is_array($enabledFeeds) || empty($enabledFeeds)) {
             return false;
         }
 
-        return in_array($feedId, $enabledFeeds, true);
+        return in_array($feedId, array_map('strval', $enabledFeeds), true);
     }
 
     protected function getFeedCategoryId(string $feedId): ?string {
@@ -148,7 +158,7 @@ final class NativeFullContentExtension extends Minz_Extension {
                 return $catId;
             }
         } catch (\Throwable $e) {
-            // Ignorer
+            // Ignorer l'erreur
         }
 
         return null;
