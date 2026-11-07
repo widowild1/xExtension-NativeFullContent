@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 final class FreshExtension_nativeFullContent_Controller extends Minz_ActionController {
 
-    #[\Override]
     public function firstAction(): void {
         $this->view->_layout(null);
         if (!FreshRSS_Auth::hasAccess()) {
@@ -16,11 +15,12 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
         $this->view->_layout(null);
         header('Content-Type: application/json; charset=UTF-8');
 
-        $entryId = Minz_Request::paramString('id');
-        if ($entryId === '') {
+        $rawId = Minz_Request::param('id');
+        if ($rawId === null || $rawId === '') {
             echo json_encode(['success' => false, 'error' => 'Identifiant d\'article invalide.']);
             exit;
         }
+        $entryId = is_numeric($rawId) ? (int) $rawId : $rawId;
 
         $extension = Minz_ExtensionManager::findExtension('NativeFullContent')
                   ?: Minz_ExtensionManager::findExtension('xExtension-NativeFullContent');
@@ -60,7 +60,7 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
         $entry->_content($savedContent);
         $entry->_lastModified(time());
 
-        // Mise à jour native conforme à EntryDAO
+        // Mise à jour certifiée conforme au modèle FreshRSS
         $updated = $entryDAO->updateEntry($entry->toArray());
 
         if (!$updated) {
