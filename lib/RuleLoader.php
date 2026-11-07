@@ -3,16 +3,13 @@
 final class RuleLoader {
 
     private string $rulesDir;
-    /** @var array<string, array|null> Cache en mémoire pour la session */
+    /** @var array<string, array|null> Cache mémoire */
     private array $resolvedCache = [];
 
     public function __construct(string $rulesDir) {
         $this->rulesDir = rtrim($rulesDir, '/\\');
     }
 
-    /**
-     * Détecte le domaine d'une URL et renvoie la règle correspondante
-     */
     public function getRuleForUrl(string $url): ?array {
         $host = parse_url($url, PHP_URL_HOST);
         if (empty($host)) {
@@ -22,9 +19,6 @@ final class RuleLoader {
         return $this->getRuleForHost($host);
     }
 
-    /**
-     * Recherche une règle pour un hôte en résolvant les sous-domaines (ex: blog.lemonde.fr -> lemonde.fr)
-     */
     public function getRuleForHost(string $host): ?array {
         $host = strtolower(trim($host));
 
@@ -32,7 +26,6 @@ final class RuleLoader {
             return $this->resolvedCache[$host];
         }
 
-        // 1. Liste des candidats : host exact, sans 'www.', puis domaines parents
         $candidates = [];
         $candidates[] = $host;
 
@@ -48,7 +41,6 @@ final class RuleLoader {
 
         $candidates = array_unique($candidates);
 
-        // 2. Vérification sur le disque
         foreach ($candidates as $candidate) {
             $file = $this->rulesDir . '/' . $candidate . '.json';
             if (is_file($file) && is_readable($file)) {
@@ -56,6 +48,7 @@ final class RuleLoader {
                 $rule = json_decode($raw, true);
 
                 if (is_array($rule) && !empty($rule['content'])) {
+                    $rule['_matched_domain'] = $candidate;
                     $this->resolvedCache[$host] = $rule;
                     return $rule;
                 }
@@ -66,9 +59,6 @@ final class RuleLoader {
         return null;
     }
 
-    /**
-     * Liste toutes les règles présentes sur le disque (pour l'UI de configuration)
-     */
     public function getAllRules(): array {
         $rules = [];
         if (!is_dir($this->rulesDir)) {
