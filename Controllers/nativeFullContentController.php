@@ -11,8 +11,8 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
     public function fetchAction() {
         header('Content-Type: application/json; charset=UTF-8');
 
-        $entryId = (int) Minz_Request::param('id', 0);
-        if ($entryId <= 0) {
+        $entryId = Minz_Request::param('id');
+        if (empty($entryId)) {
             echo json_encode(['success' => false, 'error' => 'Identifiant d\'article invalide.']);
             exit;
         }
@@ -47,17 +47,20 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
             exit;
         }
 
-        $buttonHtml = '<div class="native-fullcontent-header-bar" style="margin-bottom:12px;padding:6px 10px;background:#f7f9fa;border-left:3px solid #0066cc;" data-entry-id="' . $entryId . '">'
+        $badgeHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . htmlspecialchars((string)$entryId, ENT_QUOTES, 'UTF-8') . '">'
                     . '<span class="native-badge-success" style="color:#137333;font-weight:bold;">✅ Texte intégral récupéré (' . mb_strlen($fullContent) . ' caractères)</span>'
                     . '</div>';
 
-        $savedContent = $buttonHtml . $fullContent;
+        $savedContent = $badgeHtml . $fullContent;
         $entry->_content($savedContent);
+        $entry->_lastModified(time());
 
-        if (method_exists($entryDAO, 'updateContent')) {
-            $entryDAO->updateContent($entryId, $savedContent);
-        } elseif (method_exists($entryDAO, 'updateEntry')) {
-            $entryDAO->updateEntry($entry);
+        // Sauvegarde native certifiée via toArray()
+        $updated = $entryDAO->updateEntry($entry->toArray());
+
+        if (!$updated) {
+            echo json_encode(['success' => false, 'error' => 'Échec de la sauvegarde en base de données.']);
+            exit;
         }
 
         echo json_encode([
