@@ -1,18 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 final class FreshExtension_nativeFullContent_Controller extends Minz_ActionController {
 
-    public function firstAction() {
+    #[\Override]
+    public function firstAction(): void {
+        $this->view->_layout(null);
         if (!FreshRSS_Auth::hasAccess()) {
             Minz_Error::error(403);
         }
     }
 
-    public function fetchAction() {
+    public function fetchAction(): void {
+        $this->view->_layout(null);
         header('Content-Type: application/json; charset=UTF-8');
 
-        $entryId = Minz_Request::param('id');
-        if (empty($entryId)) {
+        $entryId = Minz_Request::paramString('id');
+        if ($entryId === '') {
             echo json_encode(['success' => false, 'error' => 'Identifiant d\'article invalide.']);
             exit;
         }
@@ -47,15 +52,15 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
             exit;
         }
 
-        $badgeHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . htmlspecialchars((string)$entryId, ENT_QUOTES, 'UTF-8') . '">'
-                    . '<span class="native-badge-success" style="color:#137333;font-weight:bold;">✅ Texte intégral récupéré (' . mb_strlen($fullContent) . ' caractères)</span>'
+        $badgeHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . htmlspecialchars((string)$entryId, ENT_QUOTES, 'UTF-8') . '" style="margin-bottom:12px;padding:6px 10px;background:#f0fff4;border-left:3px solid #38a169;">'
+                    . '<span class="native-badge-success" style="color:#22543d;font-weight:bold;">✅ Texte intégral récupéré (' . mb_strlen($fullContent) . ' caractères)</span>'
                     . '</div>';
 
         $savedContent = $badgeHtml . $fullContent;
         $entry->_content($savedContent);
         $entry->_lastModified(time());
 
-        // Sauvegarde native certifiée via toArray()
+        // Mise à jour native conforme à EntryDAO
         $updated = $entryDAO->updateEntry($entry->toArray());
 
         if (!$updated) {
