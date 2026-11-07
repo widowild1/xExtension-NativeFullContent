@@ -1,6 +1,12 @@
 <?php
 
-require_once __DIR__ . '/lib/Readability.php';
+// Chargement de l'autoloader embarqué de Composer
+if (file_exists(__DIR__ . '/vendor/autoload.php')) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
+use FiveFilters\Readability\Readability;
+use FiveFilters\Readability\Configuration;
 
 final class NativeFullContentExtension extends Minz_Extension {
 
@@ -29,6 +35,11 @@ final class NativeFullContentExtension extends Minz_Extension {
             return null;
         }
 
+        // Vérification si la classe FiveFilters est disponible
+        if (!class_exists('FiveFilters\Readability\Readability')) {
+            return $entry;
+        }
+
         $enabledFeeds = $this->getUserConfigurationValue('enabled_feeds');
         if (!is_array($enabledFeeds)) {
             $enabledFeeds = [];
@@ -49,11 +60,27 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        $readability = new StandaloneReadability($html, $url);
-        $fullContent = $readability->getContent();
+        try {
+            $config = new Configuration();
+            $config->setFixRelativeURLs(true);
+            $config->setOriginalURL($url);
 
-        if (mb_strlen($fullContent) > mb_strlen($entry->content())) {
-            $entry->_content($fullContent);
+            $readability = new Readability($config);
+            $parsed = $readability->parse($html);
+
+            if ($parsed) {
+                $fullContent = $readability->getContent();
+
+                // Post-traitement du HTML pour réparer le lazy-loading résiduel
+                $fullContent = $this->fixLazyLoadingImages($fullContent, $url);
+
+                if (mb_strlen($fullContent) > mb_strlen($entry->content())) {
+                    $entry->_content($fullContent);
+                }
+            }
+        } catch (\Throwable $e) {
+            // En cas d'erreur de parsing, on laisse l'article original intact
+            return $entry;
         }
 
         return $entry;
@@ -72,7 +99,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT => $userAgent,
-            CURLOPT_ENCODING => '',
+            CURLOPT_ENCODING => '', // Active la décompression automatique gzip/deflate
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER => [
@@ -91,5 +118,48 @@ final class NativeFullContentExtension extends Minz_Extension {
         }
 
         return (string) $content;
+    }
+
+    protected function fixLazyLoadingImages(string $html, string $baseUrl): string {
+        if (trim($html) === '') {
+            return '';
+        }
+
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $encodedHtml = mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8');
+        $dom->loadHTML('<?xml encoding="UTF-8">' . $encodedHtml, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+
+        $images = $dom->getElementsByTagName('img');
+        $modified = false;
+
+        foreach ($images as $img) {
+            if ($img->hasAttribute('data-src')) {
+                $img->setAttribute('src', $img->getAttribute('data-src'));
+                $modified = true;
+            } elseif ($img->hasAttribute('data-original')) {
+                $img->setAttribute('src', $img->getAttribute('data-original'));
+                $modified = true;
+            } elseif ($img->hasAttribute('data-lazy-src')) {
+                $img->setAttribute('src', $img->getAttribute('data-lazy-src'));
+                $modified = true;
+            }
+        }
+
+        if (!$modified) {
+            return $html;
+        }
+
+        $body = $dom->getElementsByTagName('body')->item(0);
+        if ($body !== null) {
+            $output = '';
+            foreach ($body->childNodes as $child) {
+                $output .= $dom->saveHTML($child);
+            }
+            return trim($output);
+        }
+
+        return $dom->saveHTML();
     }
 }
