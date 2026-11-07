@@ -32,7 +32,6 @@ final class NativeFullContentExtension extends Minz_Extension {
 
         $this->registerController('nativeFullContent');
 
-        // Injection des scripts et styles dans l'interface de lecture
         Minz_View::appendScript($this->getFileUrl('script.js', 'js'));
         Minz_View::appendStyle($this->getFileUrl('style.css', 'css'));
     }
@@ -106,14 +105,14 @@ final class NativeFullContentExtension extends Minz_Extension {
                 $enabledCategories = Minz_Request::param('enabled_categories', []);
                 $enabledFeeds = Minz_Request::param('enabled_feeds', []);
                 $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-                $timeout = (int) Minz_Request::param('timeout', 12);
+                $timeout = (int) Minz_Request::param('timeout', 15);
                 $maxPerFeed = (int) Minz_Request::param('max_per_feed', 5);
 
                 $this->setUserConfigurationValue('scope_mode', $scopeMode);
                 $this->setUserConfigurationValue('enabled_categories', is_array($enabledCategories) ? array_map('strval', $enabledCategories) : []);
                 $this->setUserConfigurationValue('enabled_feeds', is_array($enabledFeeds) ? array_map('strval', $enabledFeeds) : []);
                 $this->setUserConfigurationValue('user_agent', $userAgent);
-                $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 12);
+                $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 15);
                 $this->setUserConfigurationValue('max_per_feed', $maxPerFeed > 0 ? $maxPerFeed : 5);
             }
         }
@@ -159,7 +158,6 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        // Évite la duplication du bouton si l'article est déjà traité
         if (str_contains($entry->content(), 'native-fullcontent-header-bar')) {
             return $entry;
         }
@@ -178,20 +176,19 @@ final class NativeFullContentExtension extends Minz_Extension {
     }
 
     public function extractArticleContent(string $url, ?array &$debugInfo = null): ?string {
-        $html = $this->fetchUrl($url);
+        $cleanUrl = html_entity_decode(trim($url), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $html = $this->fetchUrl($cleanUrl, $debugInfo);
+
         if ($html === '') {
-            if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la connexion HTTP (site distant inaccessible, code >= 400 ou timeout).';
-            }
             return null;
         }
 
-        // 1. Règles spécifiques par domaine (rules/*.json)
-        $rule = $this->getRuleLoader()->getRuleForUrl($url);
+        // 1. Règles par domaine (rules/*.json)
+        $rule = $this->getRuleLoader()->getRuleForUrl($cleanUrl);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
                 $html,
-                $url,
+                $cleanUrl,
                 $rule['content'],
                 $rule['strip'] ?? ''
             );
@@ -205,7 +202,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection de Readability (supporte fivefilters en minuscules)
+        // 2. Détection dynamique de Readability
         $readabilityClass = null;
         $configClass = null;
 
@@ -227,13 +224,13 @@ final class NativeFullContentExtension extends Minz_Extension {
                     $config->setFixRelativeURLs(true);
                 }
                 if (method_exists($config, 'setOriginalURL')) {
-                    $config->setOriginalURL($url);
+                    $config->setOriginalURL($cleanUrl);
                 }
 
                 $readability = new $readabilityClass($config);
                 if ($readability->parse($html)) {
                     $content = $readability->getContent();
-                    $content = SelectorExtractor::cleanAndNormalize($content, $url);
+                    $content = SelectorExtractor::cleanAndNormalize($content, $cleanUrl);
 
                     if ($debugInfo !== null) {
                         $debugInfo['engine'] = 'Readability (' . $readabilityClass . ')';
@@ -302,9 +299,9 @@ final class NativeFullContentExtension extends Minz_Extension {
         return null;
     }
 
-    public function fetchUrl(string $url): string {
+    public function fetchUrl(string $url, ?array &$debugInfo = null): string {
         $userAgent = (string) ($this->getUserConfigurationValue('user_agent') ?: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 12);
+        $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 15);
 
         @set_time_limit($timeout + 5);
 
@@ -313,25 +310,37 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 4,
+            CURLOPT_MAXREDIRS => 10,
             CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_CONNECTTIMEOUT => 6,
             CURLOPT_USERAGENT => $userAgent,
             CURLOPT_ENCODING => '',
             CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_HTTPHEADER => [
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language: fr,fr-FR;q=0.9,en;q=0.8',
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language: fr,fr-FR;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Sec-Fetch-Dest: document',
+                'Sec-Fetch-Mode: navigate',
+                'Sec-Fetch-Site: none',
+                'Upgrade-Insecure-Requests: 1',
                 'Cache-Control: max-age=0'
             ]
         ]);
 
         $content = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
         curl_close($ch);
 
         if ($content === false || $httpCode < 200 || $httpCode >= 400) {
+            if ($debugInfo !== null) {
+                if ($curlError !== '') {
+                    $debugInfo['error'] = 'Erreur réseau cURL : ' . $curlError;
+                } else {
+                    $debugInfo['error'] = 'Le serveur distant a renvoyé un code HTTP ' . $httpCode;
+                }
+            }
             return '';
         }
 
