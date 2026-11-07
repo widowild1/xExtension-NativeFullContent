@@ -31,6 +31,10 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
 
         $this->registerController('nativeFullContent');
+
+        // Injection des scripts et styles dans l'interface de lecture
+        Minz_View::appendScript($this->getFileUrl('script.js', 'js'));
+        Minz_View::appendStyle($this->getFileUrl('style.css', 'css'));
     }
 
     public function getRuleLoader(): RuleLoader {
@@ -155,6 +159,11 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
+        // Évite la duplication du bouton si l'article est déjà traité
+        if (str_contains($entry->content(), 'native-fullcontent-header-bar')) {
+            return $entry;
+        }
+
         $id = (string) $entry->id();
         $buttonHtml = '<div class="native-fullcontent-header-bar" style="margin-bottom:12px;padding:6px 10px;background:#f7f9fa;border-left:3px solid #0066cc;">'
                     . '<button type="button" class="btn btn-secondary native-btn-fetch" '
@@ -172,7 +181,7 @@ final class NativeFullContentExtension extends Minz_Extension {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la connexion HTTP (site inaccessible, timeout ou blocage).';
+                $debugInfo['error'] = 'Échec de la connexion HTTP (site distant inaccessible, code >= 400 ou timeout).';
             }
             return null;
         }
@@ -196,7 +205,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection dynamique de Readability (avec casse fivefilters en minuscules)
+        // 2. Détection de Readability (supporte fivefilters en minuscules)
         $readabilityClass = null;
         $configClass = null;
 
