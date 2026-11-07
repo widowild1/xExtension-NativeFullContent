@@ -17,6 +17,10 @@ require_once __DIR__ . '/lib/SelectorExtractor.php';
 
 final class NativeFullContentExtension extends Minz_Extension {
 
+    public static ?array $testResult = null;
+    public static ?string $testError = null;
+    public static string $testUrl = '';
+
     private ?RuleLoader $ruleLoader = null;
     /** @var array<string, string> Cache catégorie feedId => categoryId */
     private array $feedCategoryCache = [];
@@ -44,43 +48,38 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function handleConfigureAction(): void {
         $this->registerTranslates();
 
-        // 1. Interception prioritaire du banc d'essai AJAX
-        if (Minz_Request::isPost() && Minz_Request::param('ajax_action') === 'test') {
-            header('Content-Type: application/json; charset=UTF-8');
-
-            $url = trim((string) Minz_Request::param('url', ''));
-            if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-                echo json_encode(['success' => false, 'error' => 'Veuillez saisir une URL valide (ex: https://...).']);
-                exit;
-            }
-
-            $debugInfo = [
-                'host' => parse_url($url, PHP_URL_HOST),
-                'engine' => 'Aucun',
-            ];
-
-            $content = $this->extractArticleContent($url, $debugInfo);
-
-            if ($content === null || trim($content) === '') {
-                echo json_encode([
-                    'success' => false,
-                    'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
-                    'debug' => $debugInfo
-                ]);
-                exit;
-            }
-
-            echo json_encode([
-                'success' => true,
-                'debug' => $debugInfo,
-                'length' => mb_strlen($content),
-                'html' => $content
-            ]);
-            exit;
-        }
-
-        // 2. Sauvegarde des options du formulaire
         if (Minz_Request::isPost()) {
+            $op = (string) Minz_Request::param('op', 'save');
+
+            // 1. Traitement du banc d'essai (100% PHP natif)
+            if ($op === 'test') {
+                self::$testUrl = trim((string) Minz_Request::param('test_url', ''));
+                if (self::$testUrl !== '' && filter_var(self::$testUrl, FILTER_VALIDATE_URL)) {
+                    $debugInfo = [
+                        'host' => parse_url(self::$testUrl, PHP_URL_HOST),
+                        'engine' => 'Aucun',
+                    ];
+
+                    $content = $this->extractArticleContent(self::$testUrl, $debugInfo);
+
+                    if ($content !== null && trim($content) !== '') {
+                        self::$testResult = [
+                            'html' => $content,
+                            'length' => mb_strlen($content),
+                            'debug' => $debugInfo,
+                        ];
+                    } else {
+                        self::$testError = $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait de cette URL.';
+                        self::$testResult = null;
+                    }
+                } else {
+                    self::$testError = 'Veuillez saisir une URL valide (commençant par http:// ou https://).';
+                    self::$testResult = null;
+                }
+                return;
+            }
+
+            // 2. Sauvegarde des options
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
                 $scopeMode = 'feed';
