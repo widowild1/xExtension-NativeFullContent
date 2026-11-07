@@ -8,6 +8,48 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
         }
     }
 
+    public function testAction() {
+        header('Content-Type: application/json; charset=UTF-8');
+
+        $url = trim((string) Minz_Request::param('url', ''));
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            echo json_encode(['success' => false, 'error' => 'Veuillez saisir une URL valide (ex: https://...).']);
+            exit;
+        }
+
+        $extension = Minz_ExtensionManager::findExtension('NativeFullContent')
+                  ?: Minz_ExtensionManager::findExtension('xExtension-NativeFullContent');
+
+        if ($extension === null) {
+            echo json_encode(['success' => false, 'error' => 'Extension introuvable dans Minz_ExtensionManager.']);
+            exit;
+        }
+
+        $debugInfo = [
+            'host' => parse_url($url, PHP_URL_HOST),
+            'engine' => 'Aucun',
+        ];
+
+        $content = $extension->extractArticleContent($url, $debugInfo);
+
+        if ($content === null || trim($content) === '') {
+            echo json_encode([
+                'success' => false,
+                'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
+                'debug' => $debugInfo
+            ]);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => true,
+            'debug' => $debugInfo,
+            'length' => mb_strlen($content),
+            'html' => $content
+        ]);
+        exit;
+    }
+
     public function fetchAction() {
         header('Content-Type: application/json; charset=UTF-8');
 
@@ -43,7 +85,7 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
         $fullContent = $extension->extractArticleContent($url, $debugInfo);
 
         if ($fullContent === null || trim($fullContent) === '') {
-            echo json_encode(['success' => false, 'error' => 'Impossible de récupérer le contenu de la page.']);
+            echo json_encode(['success' => false, 'error' => $debugInfo['error'] ?? 'Impossible d\'extraire le contenu distant.']);
             exit;
         }
 
