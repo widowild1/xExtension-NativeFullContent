@@ -21,16 +21,11 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function init(): void {
         $this->ruleLoader = new RuleLoader(__DIR__ . '/rules');
 
-        // Hook d'importation cron
         $this->registerHook('entry_before_insert', [$this, 'parseArticleBeforeInsert']);
-        
-        // Hook d'affichage : injection du bouton d'extraction manuelle
         $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
 
-        // Contrôleur Minz pour les requêtes AJAX (Banc de test + Rechargement à la volée)
         $this->registerController('nativeFullContent');
 
-        // Chargement des scripts et styles personnalisés
         Minz_View::appendScript($this->getFileUrl('script.js', true));
         Minz_View::appendStyle($this->getFileUrl('style.css', true));
     }
@@ -46,6 +41,42 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function handleConfigureAction(): void {
         $this->registerTranslates();
 
+        // 1. Prise en charge directe de l'action AJAX du banc d'essai
+        if (Minz_Request::isPost() && Minz_Request::param('ajax_action') === 'test') {
+            header('Content-Type: application/json; charset=UTF-8');
+
+            $url = trim((string) Minz_Request::param('url', ''));
+            if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+                echo json_encode(['success' => false, 'error' => 'URL invalide ou absente.']);
+                exit;
+            }
+
+            $debugInfo = [
+                'host' => parse_url($url, PHP_URL_HOST),
+                'engine' => 'Aucun',
+            ];
+
+            $content = $this->extractArticleContent($url, $debugInfo);
+
+            if ($content === null || trim($content) === '') {
+                echo json_encode([
+                    'success' => false,
+                    'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
+                    'debug' => $debugInfo
+                ]);
+                exit;
+            }
+
+            echo json_encode([
+                'success' => true,
+                'debug' => $debugInfo,
+                'length' => mb_strlen($content),
+                'html' => $content
+            ]);
+            exit;
+        }
+
+        // 2. Enregistrement classique des paramètres de configuration
         if (Minz_Request::isPost()) {
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -67,9 +98,6 @@ final class NativeFullContentExtension extends Minz_Extension {
         }
     }
 
-    /**
-     * Traitement automatique lors du rafraîchissement des flux (avec protection anti-timeout)
-     */
     public function parseArticleBeforeInsert(?FreshRSS_Entry $entry): ?FreshRSS_Entry {
         if ($entry === null) {
             return null;
@@ -80,7 +108,6 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        // Garde-fou anti-timeout : limitation du nombre d'articles scrapés par flux
         $maxPerFeed = (int) ($this->getUserConfigurationValue('max_per_feed') ?: 5);
         $currentCount = $this->feedProcessedCounter[$feedId] ?? 0;
         if ($currentCount >= $maxPerFeed) {
@@ -101,9 +128,6 @@ final class NativeFullContentExtension extends Minz_Extension {
         return $entry;
     }
 
-    /**
-     * Injection du bouton « Récupérer le texte complet » dans l'en-tête de l'article
-     */
     public function injectEntryButton(?FreshRSS_Entry $entry): ?FreshRSS_Entry {
         if ($entry === null) {
             return null;
@@ -127,14 +151,11 @@ final class NativeFullContentExtension extends Minz_Extension {
         return $entry;
     }
 
-    /**
-     * Cœur d'extraction (Règle spécifique puis repli FiveFilters Readability)
-     */
     public function extractArticleContent(string $url, ?array &$debugInfo = null): ?string {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Impossible de récupérer le code source HTML (HTTP ou Timeout).';
+                $debugInfo['error'] = 'Échec de la requête HTTP (connexion bloquée, code HTTP >= 400 ou timeout).';
             }
             return null;
         }
@@ -180,6 +201,10 @@ final class NativeFullContentExtension extends Minz_Extension {
                 if ($debugInfo !== null) {
                     $debugInfo['error'] = 'Erreur d\'exécution Readability : ' . $e->getMessage();
                 }
+            }
+        } else {
+            if ($debugInfo !== null) {
+                $debugInfo['error'] = 'Le dossier vendor/ est manquant sur le serveur. Lancez "composer require fivefilters/readability.php" dans le dossier de l\'extension.';
             }
         }
 
