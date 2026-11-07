@@ -71,7 +71,6 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        // 1. Détection automatique du nom de domaine et chargement de la règle
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -87,7 +86,6 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Repli automatique (fallback) sur FiveFilters Readability
         if (class_exists('FiveFilters\Readability\Readability')) {
             try {
                 $config = new Configuration();
@@ -150,7 +148,7 @@ final class NativeFullContentExtension extends Minz_Extension {
                 return $catId;
             }
         } catch (\Throwable $e) {
-            // Ignorer l'erreur
+            // Ignorer
         }
 
         return null;
