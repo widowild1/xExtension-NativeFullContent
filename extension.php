@@ -46,11 +46,19 @@ final class NativeFullContentExtension extends Minz_Extension {
 
         if (Minz_Request::isPost()) {
             $op = (string) Minz_Request::param('op', '');
-            $targetUrl = $_SERVER['REQUEST_URI'] ?? _url('extension', 'configure', ['e' => $this->getName()]);
 
-            // 1. Banc d'essai : isolation sans altérer les réglages de l'utilisateur
+            // 1. Banc d'essai : rendu isolé dans l'iframe cible (ne ferme jamais le panneau)
             if ($op === 'test') {
                 $testUrl = trim((string) Minz_Request::param('test_url', ''));
+                header('Content-Type: text/html; charset=UTF-8');
+
+                echo '<!DOCTYPE html><html><head><meta charset="utf-8">';
+                echo '<style>body{font-family:sans-serif;font-size:13px;margin:10px;color:#24292f;}'
+                   . '.card-ok{background:#f0fff4;border:1px solid #48bb78;border-radius:5px;padding:12px;color:#22543d;}'
+                   . '.card-ko{background:#fff5f5;border:1px solid #f56565;border-radius:5px;padding:12px;color:#742a2a;}'
+                   . '.preview{margin-top:10px;max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e0;padding:10px;border-radius:4px;}</style>';
+                echo '</head><body>';
+
                 if ($testUrl !== '' && filter_var($testUrl, FILTER_VALIDATE_URL)) {
                     $debugInfo = [
                         'host' => parse_url($testUrl, PHP_URL_HOST),
@@ -60,23 +68,27 @@ final class NativeFullContentExtension extends Minz_Extension {
                     $content = $this->extractArticleContent($testUrl, $debugInfo);
 
                     if ($content !== null && trim($content) !== '') {
-                        $_SESSION['native_test_result'] = [
-                            'html' => $content,
-                            'length' => mb_strlen($content),
-                            'debug' => $debugInfo,
-                        ];
-                        $_SESSION['native_test_error'] = null;
+                        echo '<div class="card-ok">';
+                        echo '<strong>✅ Extraction réussie !</strong><br>';
+                        echo 'Hôte : ' . htmlspecialchars($debugInfo['host'] ?? '', ENT_QUOTES) . '<br>';
+                        echo 'Moteur : ' . htmlspecialchars($debugInfo['engine'] ?? '', ENT_QUOTES) . '<br>';
+                        if (!empty($debugInfo['selector'])) {
+                            echo 'Sélecteur : <code>' . htmlspecialchars($debugInfo['selector'], ENT_QUOTES) . '</code><br>';
+                        }
+                        echo 'Longueur : ' . mb_strlen($content) . ' caractères.';
+                        echo '<details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:bold;">Voir le texte extrait</summary>';
+                        echo '<div class="preview">' . $content . '</div>';
+                        echo '</details></div>';
                     } else {
-                        $_SESSION['native_test_error'] = $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait de cette URL.';
-                        $_SESSION['native_test_result'] = null;
+                        echo '<div class="card-ko">';
+                        echo '<strong>❌ Échec de l\'analyse :</strong> ' . htmlspecialchars($debugInfo['error'] ?? 'Aucun contenu significatif extrait.', ENT_QUOTES);
+                        echo '</div>';
                     }
                 } else {
-                    $_SESSION['native_test_error'] = 'Veuillez saisir une URL valide (commençant par http:// ou https://).';
-                    $_SESSION['native_test_result'] = null;
+                    echo '<div class="card-ko"><strong>❌ Erreur :</strong> Veuillez saisir une URL valide (ex: https://...).</div>';
                 }
-                $_SESSION['native_test_url'] = $testUrl;
 
-                header('Location: ' . $targetUrl);
+                echo '</body></html>';
                 exit;
             }
 
@@ -99,10 +111,6 @@ final class NativeFullContentExtension extends Minz_Extension {
                 $this->setUserConfigurationValue('user_agent', $userAgent);
                 $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 12);
                 $this->setUserConfigurationValue('max_per_feed', $maxPerFeed > 0 ? $maxPerFeed : 5);
-
-                $_SESSION['native_save_notice'] = true;
-                header('Location: ' . $targetUrl);
-                exit;
             }
         }
     }
@@ -164,12 +172,12 @@ final class NativeFullContentExtension extends Minz_Extension {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la connexion HTTP (serveur distant inaccessible, code HTTP >= 400 ou timeout).';
+                $debugInfo['error'] = 'Échec de la connexion HTTP (site inaccessible, timeout ou blocage).';
             }
             return null;
         }
 
-        // 1. Règles par domaine (rules/<domaine>.json)
+        // 1. Règles spécifiques par domaine (rules/*.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -188,11 +196,14 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection dynamique de Readability
+        // 2. Détection dynamique de Readability (avec casse fivefilters en minuscules)
         $readabilityClass = null;
         $configClass = null;
 
-        if (class_exists('FiveFilters\Readability\Readability')) {
+        if (class_exists('fivefilters\Readability\Readability')) {
+            $readabilityClass = 'fivefilters\Readability\Readability';
+            $configClass = 'fivefilters\Readability\Configuration';
+        } elseif (class_exists('FiveFilters\Readability\Readability')) {
             $readabilityClass = 'FiveFilters\Readability\Readability';
             $configClass = 'FiveFilters\Readability\Configuration';
         } elseif (class_exists('andreskrey\Readability\Readability')) {
@@ -230,7 +241,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         } else {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Bibliothèque Readability absente. Exécutez composer install dans le dossier de l\'extension.';
+                $debugInfo['error'] = 'Bibliothèque Readability absente. Vérifiez autoload.php.';
             }
         }
 
