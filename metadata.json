@@ -1,0 +1,8 @@
+{
+  "name": "FullText Native",
+  "author": "Fork Dev",
+  "description": "Extraction automatique du texte intégral des articles sans conteneur Docker (100% PHP natif).",
+  "version": "1.0.0",
+  "entrypoint": "NativeFullContent",
+  "type": "user"
+}
