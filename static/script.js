@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', function () {
 
-    // 1. Gestion du bouton "Récupérer le texte complet" à la volée sur un article
+    // 1. Bouton "Récupérer le texte complet" à la volée sur un article
     document.body.addEventListener('click', function (e) {
         var btn = e.target.closest('.native-btn-fetch');
         if (!btn) return;
@@ -19,10 +19,16 @@ document.addEventListener('DOMContentLoaded', function () {
             body: formData,
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
-        .then(function (res) { return res.json(); })
+        .then(async function (res) {
+            var text = await res.text();
+            try {
+                return JSON.parse(text);
+            } catch (err) {
+                throw new Error('Erreur HTTP ' + res.status + ' : ' + text.substring(0, 200));
+            }
+        })
         .then(function (data) {
             if (data.success) {
-                // Recherche du conteneur de contenu de l'article dans l'interface FreshRSS
                 var container = btn.closest('.flux_content') || btn.closest('.content') || btn.closest('[data-entry-id="' + entryId + '"]');
                 if (container) {
                     var contentTarget = container.querySelector('.text') || container.querySelector('.content') || container;
@@ -31,19 +37,19 @@ document.addEventListener('DOMContentLoaded', function () {
                     btn.outerHTML = '<span class="native-badge-success">✅ Contenu mis à jour !</span>';
                 }
             } else {
-                alert('Erreur lors de l\'extraction : ' + (data.error || 'Erreur inconnue'));
+                alert('Erreur d\'extraction : ' + (data.error || 'Erreur inconnue'));
                 btn.disabled = false;
                 btn.innerHTML = originalText;
             }
         })
         .catch(function (err) {
-            alert('Erreur de communication réseau.');
+            alert(err.message);
             btn.disabled = false;
             btn.innerHTML = originalText;
         });
     });
 
-    // 2. Gestion du banc d'essai dans la page de configuration
+    // 2. Banc d'essai en direct sur la page de configuration
     var btnTest = document.getElementById('native_btn_run_test');
     if (btnTest) {
         btnTest.addEventListener('click', function () {
@@ -61,15 +67,28 @@ document.addEventListener('DOMContentLoaded', function () {
             resultContainer.style.display = 'block';
             resultContainer.innerHTML = '<em>Connexion et extraction du document...</em>';
 
-            var formData = new FormData();
-            formData.append('url', url);
+            var csrfInput = document.querySelector('input[name="_csrf"]');
+            var csrfToken = csrfInput ? csrfInput.value : '';
 
-            fetch('./?c=nativeFullContent&a=test', {
+            var formData = new FormData();
+            formData.append('ajax_action', 'test');
+            formData.append('url', url);
+            formData.append('_csrf', csrfToken);
+
+            // Requête vers l'URL courante de la page de configuration
+            fetch(window.location.href, {
                 method: 'POST',
                 body: formData,
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             })
-            .then(function (res) { return res.json(); })
+            .then(async function (res) {
+                var text = await res.text();
+                try {
+                    return JSON.parse(text);
+                } catch (err) {
+                    throw new Error('Réponse serveur invalide (HTTP ' + res.status + ') : ' + text.substring(0, 300));
+                }
+            })
             .then(function (data) {
                 btnTest.disabled = false;
                 btnTest.innerHTML = 'Tester l\'extraction';
@@ -84,21 +103,21 @@ document.addEventListener('DOMContentLoaded', function () {
                                 '<li><strong>Longueur extraite :</strong> ' + data.length + ' caractères</li>' +
                             '</ul>' +
                             '<details style="margin-top: 10px;" open>' +
-                                '<summary style="cursor: pointer; font-weight: bold;">Aperçu du rendu</summary>' +
+                                '<summary style="cursor: pointer; font-weight: bold;">Aperçu du texte extrait</summary>' +
                                 '<div class="native-preview-box">' + data.html + '</div>' +
                             '</details>' +
                         '</div>';
                 } else {
                     resultContainer.innerHTML = 
                         '<div class="native-test-card error">' +
-                            '<strong>Échec de l\'analyse :</strong> ' + data.error +
+                            '<strong>Échec de l\'analyse :</strong> ' + (data.error || 'Erreur non spécifiée') +
                         '</div>';
                 }
             })
             .catch(function (err) {
                 btnTest.disabled = false;
                 btnTest.innerHTML = 'Tester l\'extraction';
-                resultContainer.innerHTML = '<div class="native-test-card error">Erreur réseau lors du test.</div>';
+                resultContainer.innerHTML = '<div class="native-test-card error">' + err.message + '</div>';
             });
         });
     }
