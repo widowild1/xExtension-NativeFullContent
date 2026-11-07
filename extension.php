@@ -1,10 +1,15 @@
 <?php
 
-// Recherche de l'autoloader local ou parent
-if (file_exists(__DIR__ . '/vendor/autoload.php')) {
-    require_once __DIR__ . '/vendor/autoload.php';
-} elseif (file_exists(dirname(__DIR__) . '/vendor/autoload.php')) {
-    require_once dirname(__DIR__) . '/vendor/autoload.php';
+$autoloadCandidates = [
+    __DIR__ . '/vendor/autoload.php',
+    dirname(__DIR__) . '/vendor/autoload.php',
+    dirname(__DIR__, 2) . '/vendor/autoload.php',
+];
+foreach ($autoloadCandidates as $file) {
+    if (file_exists($file)) {
+        require_once $file;
+        break;
+    }
 }
 
 require_once __DIR__ . '/lib/RuleLoader.php';
@@ -42,42 +47,6 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function handleConfigureAction(): void {
         $this->registerTranslates();
 
-        // Prise en charge du banc d'essai AJAX
-        if (Minz_Request::isPost() && Minz_Request::param('ajax_action') === 'test') {
-            header('Content-Type: application/json; charset=UTF-8');
-
-            $url = trim((string) Minz_Request::param('url', ''));
-            if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-                echo json_encode(['success' => false, 'error' => 'URL invalide ou absente.']);
-                exit;
-            }
-
-            $debugInfo = [
-                'host' => parse_url($url, PHP_URL_HOST),
-                'engine' => 'Aucun',
-            ];
-
-            $content = $this->extractArticleContent($url, $debugInfo);
-
-            if ($content === null || trim($content) === '') {
-                echo json_encode([
-                    'success' => false,
-                    'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
-                    'debug' => $debugInfo
-                ]);
-                exit;
-            }
-
-            echo json_encode([
-                'success' => true,
-                'debug' => $debugInfo,
-                'length' => mb_strlen($content),
-                'html' => $content
-            ]);
-            exit;
-        }
-
-        // Sauvegarde des options
         if (Minz_Request::isPost()) {
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -156,12 +125,12 @@ final class NativeFullContentExtension extends Minz_Extension {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la requête HTTP (serveur distant inaccessible ou timeout).';
+                $debugInfo['error'] = 'Échec de la connexion HTTP (site inaccessible ou bloqué).';
             }
             return null;
         }
 
-        // 1. Priorité aux règles personnalisées par domaine (rules/*.json)
+        // 1. Règles par domaine (rules/*.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -180,7 +149,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection dynamique de la classe Readability disponible
+        // 2. Détection de la classe Readability
         $readabilityClass = null;
         $configClass = null;
 
@@ -217,12 +186,12 @@ final class NativeFullContentExtension extends Minz_Extension {
                 }
             } catch (\Throwable $e) {
                 if ($debugInfo !== null) {
-                    $debugInfo['error'] = 'Erreur d\'exécution Readability : ' . $e->getMessage();
+                    $debugInfo['error'] = 'Erreur Readability : ' . $e->getMessage();
                 }
             }
         } else {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'La librairie Readability n\'a pas pu être instanciée. Vérifiez la présence du dossier vendor/.';
+                $debugInfo['error'] = 'Bibliothèque Readability absente. Exécutez composer install dans le dossier de l\'extension.';
             }
         }
 
