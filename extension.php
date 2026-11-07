@@ -31,6 +31,9 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
 
         $this->registerController('nativeFullContent');
+
+        Minz_View::appendScript($this->getFileUrl('script.js', true));
+        Minz_View::appendStyle($this->getFileUrl('style.css', true));
     }
 
     public function getRuleLoader(): RuleLoader {
@@ -47,7 +50,7 @@ final class NativeFullContentExtension extends Minz_Extension {
         if (Minz_Request::isPost()) {
             $op = (string) Minz_Request::param('op', '');
 
-            // 1. Banc d'essai : isolation stricte pour ne jamais écraser les paramètres enregistrés
+            // 1. Banc d'essai : isolation stricte sans altérer les réglages utilisateur
             if ($op === 'test') {
                 $testUrl = trim((string) Minz_Request::param('test_url', ''));
                 if ($testUrl !== '' && filter_var($testUrl, FILTER_VALIDATE_URL)) {
@@ -75,12 +78,11 @@ final class NativeFullContentExtension extends Minz_Extension {
                 }
                 $_SESSION['native_test_url'] = $testUrl;
 
-                // Redirection immédiate pour interdire à FreshRSS de quitter la page
                 header('Location: ' . _url('extension', 'configure', 'e', $this->getName()));
                 exit;
             }
 
-            // 2. Sauvegarde des options : exécutée uniquement si le formulaire principal est soumis
+            // 2. Sauvegarde des options : exécutée uniquement au clic sur le bouton du formulaire principal
             if ($op === 'save') {
                 $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
                 if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -117,7 +119,6 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        // Garde-fou anti-timeout cron : limitation du volume d'articles scrapés par passe
         $maxPerFeed = (int) ($this->getUserConfigurationValue('max_per_feed') ?: 5);
         $currentCount = $this->feedProcessedCounter[$feedId] ?? 0;
         if ($currentCount >= $maxPerFeed) {
@@ -170,7 +171,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             return null;
         }
 
-        // 1. Détection prioritaire par règle de domaine (rules/<domaine>.json)
+        // 1. Détection prioritaire par règle de domaine (rules/*.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -189,7 +190,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection dynamique de Readability (supporte les versions 3 et 4)
+        // 2. Détection dynamique de Readability (versions 3 et 4)
         $readabilityClass = null;
         $configClass = null;
 
