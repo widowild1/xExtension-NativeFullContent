@@ -1,13 +1,24 @@
 <?php
+$scopeMode = (string) ($this->getUserConfigurationValue('scope_mode') ?: 'feed');
+
+$enabledCategories = $this->getUserConfigurationValue('enabled_categories');
+if (!is_array($enabledCategories)) {
+    $enabledCategories = [];
+}
+
 $enabledFeeds = $this->getUserConfigurationValue('enabled_feeds');
 if (!is_array($enabledFeeds)) {
     $enabledFeeds = [];
 }
+
 $userAgent = $this->getUserConfigurationValue('user_agent') ?: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 $timeout = $this->getUserConfigurationValue('timeout') ?: 15;
 
-$feedDAO = FreshRSS_Factory::createFeedDao();
-$categories = $feedDAO->selectAllWithCategory();
+$categoryDAO = FreshRSS_Factory::createCategoryDao();
+$categories = $categoryDAO->listCategories(true);
+
+$ruleLoader = new RuleLoader(__DIR__ . '/rules');
+$installedRules = $ruleLoader->getAllRules();
 ?>
 
 <h2>Configuration de FullText Native</h2>
@@ -16,7 +27,7 @@ $categories = $feedDAO->selectAllWithCategory();
     <input type="hidden" name="_csrf" value="<?php echo FreshRSS_Auth::csrfToken(); ?>" />
 
     <div class="form-group">
-        <label class="group-name" for="user_agent">User-Agent personnalisé :</label>
+        <label class="group-name" for="user_agent">User-Agent HTTP :</label>
         <div class="group-controls">
             <input type="text" id="user_agent" name="user_agent" class="text" style="width: 100%;" value="<?php echo htmlspecialchars($userAgent, ENT_QUOTES, 'UTF-8'); ?>" />
         </div>
@@ -31,24 +42,96 @@ $categories = $feedDAO->selectAllWithCategory();
 
     <hr />
 
-    <h3>Activer le texte complet pour les flux suivants :</h3>
-    <p><em>Seuls les flux cochés seront scrapés pour extraire l'article complet.</em></p>
-
-    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 20px;">
-        <?php foreach ($categories as $category): ?>
-            <h4><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></h4>
-            <div style="margin-left: 20px; margin-bottom: 10px;">
-                <?php foreach ($category->feeds() as $feed): ?>
-                    <label class="checkbox">
-                        <input type="checkbox" name="enabled_feeds[]" value="<?php echo (string)$feed->id(); ?>" <?php echo in_array((string)$feed->id(), $enabledFeeds, true) ? 'checked' : ''; ?> />
-                        <?php echo htmlspecialchars($feed->name(), ENT_QUOTES, 'UTF-8'); ?>
-                    </label><br />
-                <?php endforeach; ?>
-            </div>
-        <?php endforeach; ?>
+    <h3>Portée de l'extraction de texte intégral</h3>
+    <div class="form-group">
+        <label class="group-name">Mode d'application :</label>
+        <div class="group-controls">
+            <label class="radio">
+                <input type="radio" name="scope_mode" value="all" onchange="toggleScopePanels()" <?php echo $scopeMode === 'all' ? 'checked' : ''; ?> />
+                <strong>La totalité des flux</strong> (traiter automatiquement tous les articles de tous les flux)
+            </label><br />
+            <label class="radio">
+                <input type="radio" name="scope_mode" value="category" onchange="toggleScopePanels()" <?php echo $scopeMode === 'category' ? 'checked' : ''; ?> />
+                <strong>Par catégorie</strong> (traiter les flux des catégories sélectionnées)
+            </label><br />
+            <label class="radio">
+                <input type="radio" name="scope_mode" value="feed" onchange="toggleScopePanels()" <?php echo $scopeMode === 'feed' ? 'checked' : ''; ?> />
+                <strong>À l'unité</strong> (sélection manuelle des flux spécifiques)
+            </label>
+        </div>
     </div>
 
-    <div class="form-actions">
-        <button type="submit" class="btn btn-important">Enregistrer la configuration</button>
+    <!-- Panel Catégories -->
+    <div id="panel_category" style="<?php echo $scopeMode === 'category' ? '' : 'display: none;'; ?> margin-top: 15px;">
+        <h4>Sélectionner les catégories :</h4>
+        <div style="max-height: 250px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+            <?php foreach ($categories as $category): ?>
+                <label class="checkbox">
+                    <input type="checkbox" name="enabled_categories[]" value="<?php echo (string)$category->id(); ?>" <?php echo in_array((string)$category->id(), $enabledCategories, true) ? 'checked' : ''; ?> />
+                    <strong><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></strong>
+                    <small style="color: #666;">(<?php echo count($category->feeds()); ?> flux)</small>
+                </label><br />
+            <?php endforeach; ?>
+        </div>
+    </div>
+
+    <!-- Panel Flux individuels -->
+    <div id="panel_feed" style="<?php echo $scopeMode === 'feed' ? '' : 'display: none;'; ?> margin-top: 15px;">
+        <h4>Sélectionner les flux :</h4>
+        <div style="max-height: 350px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+            <?php foreach ($categories as $category): ?>
+                <h5 style="margin: 8px 0 4px 0;"><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></h5>
+                <div style="margin-left: 20px; margin-bottom: 10px;">
+                    <?php foreach ($category->feeds() as $feed): ?>
+                        <label class="checkbox">
+                            <input type="checkbox" name="enabled_feeds[]" value="<?php echo (string)$feed->id(); ?>" <?php echo in_array((string)$feed->id(), $enabledFeeds, true) ? 'checked' : ''; ?> />
+                            <?php echo htmlspecialchars($feed->name(), ENT_QUOTES, 'UTF-8'); ?>
+                        </label><br />
+                    <?php endforeach; ?>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
+    <hr />
+
+    <h3>Règles par domaine actives (<code>rules/*.json</code>)</h3>
+    <p><em>Ces règles sont détectées automatiquement depuis les fichiers de votre dépôt Forgejo. Pour ajouter un site, créez un fichier <code>rules/nom-du-domaine.json</code>. Si un site n'est pas listé, FiveFilters Readability s'exécutera automatiquement.</em></p>
+
+    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9em;">
+        <thead>
+            <tr style="background: #f0f0f0; border-bottom: 2px solid #ccc;">
+                <th style="padding: 6px;">Domaine</th>
+                <th style="padding: 6px;">Sélecteur de contenu</th>
+                <th style="padding: 6px;">Éléments exclus</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (empty($installedRules)): ?>
+                <tr>
+                    <td colspan="3" style="padding: 10px; color: #777;">Aucun fichier de règle trouvé dans le dossier <code>rules/</code>.</td>
+                </tr>
+            <?php else: ?>
+                <?php foreach ($installedRules as $domain => $rule): ?>
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 6px;"><strong><?php echo htmlspecialchars($domain, ENT_QUOTES, 'UTF-8'); ?></strong></td>
+                        <td style="padding: 6px;"><code><?php echo htmlspecialchars($rule['content'] ?? '', ENT_QUOTES, 'UTF-8'); ?></code></td>
+                        <td style="padding: 6px; color: #888;"><code><?php echo htmlspecialchars($rule['strip'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></code></td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </tbody>
+    </table>
+
+    <div class="form-actions" style="margin-top: 20px;">
+        <button type="submit" class="btn btn-important">Enregistrer les options</button>
     </div>
 </form>
+
+<script>
+function toggleScopePanels() {
+    var mode = document.querySelector('input[name="scope_mode"]:checked').value;
+    document.getElementById('panel_category').style.display = (mode === 'category') ? 'block' : 'none';
+    document.getElementById('panel_feed').style.display = (mode === 'feed') ? 'block' : 'none';
+}
+</script>
