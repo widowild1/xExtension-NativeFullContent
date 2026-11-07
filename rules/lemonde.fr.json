@@ -1,0 +1,4 @@
+{
+  "content": "section.article__content, div.article__content",
+  "strip": ".article__reactions, .article__share, aside, .services-box"
+}
