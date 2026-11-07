@@ -31,9 +31,6 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
 
         $this->registerController('nativeFullContent');
-
-        Minz_View::appendScript($this->getFileUrl('script.js', true));
-        Minz_View::appendStyle($this->getFileUrl('style.css', true));
     }
 
     public function getRuleLoader(): RuleLoader {
@@ -47,6 +44,42 @@ final class NativeFullContentExtension extends Minz_Extension {
     public function handleConfigureAction(): void {
         $this->registerTranslates();
 
+        // 1. Interception prioritaire du banc d'essai AJAX
+        if (Minz_Request::isPost() && Minz_Request::param('ajax_action') === 'test') {
+            header('Content-Type: application/json; charset=UTF-8');
+
+            $url = trim((string) Minz_Request::param('url', ''));
+            if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+                echo json_encode(['success' => false, 'error' => 'Veuillez saisir une URL valide (ex: https://...).']);
+                exit;
+            }
+
+            $debugInfo = [
+                'host' => parse_url($url, PHP_URL_HOST),
+                'engine' => 'Aucun',
+            ];
+
+            $content = $this->extractArticleContent($url, $debugInfo);
+
+            if ($content === null || trim($content) === '') {
+                echo json_encode([
+                    'success' => false,
+                    'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
+                    'debug' => $debugInfo
+                ]);
+                exit;
+            }
+
+            echo json_encode([
+                'success' => true,
+                'debug' => $debugInfo,
+                'length' => mb_strlen($content),
+                'html' => $content
+            ]);
+            exit;
+        }
+
+        // 2. Sauvegarde des options du formulaire
         if (Minz_Request::isPost()) {
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
             if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -109,7 +142,7 @@ final class NativeFullContentExtension extends Minz_Extension {
         }
 
         $id = (string) $entry->id();
-        $buttonHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . htmlspecialchars($id, ENT_QUOTES, 'UTF-8') . '">'
+        $buttonHtml = '<div class="native-fullcontent-header-bar" style="margin-bottom:12px;padding:6px 10px;background:#f7f9fa;border-left:3px solid #0066cc;">'
                     . '<button type="button" class="btn btn-secondary native-btn-fetch" '
                     . 'data-id="' . htmlspecialchars($id, ENT_QUOTES, 'UTF-8') . '" '
                     . 'data-url="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">'
@@ -125,7 +158,7 @@ final class NativeFullContentExtension extends Minz_Extension {
         $html = $this->fetchUrl($url);
         if ($html === '') {
             if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Échec de la connexion HTTP (site inaccessible ou bloqué).';
+                $debugInfo['error'] = 'Échec de la connexion HTTP (serveur distant inaccessible, code d\'erreur HTTP >= 400 ou timeout).';
             }
             return null;
         }
