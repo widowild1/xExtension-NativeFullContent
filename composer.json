@@ -1,0 +1,7 @@
+{
+    "name": "freshrss/native-full-content",
+    "description": "Native full content extractor for FreshRSS",
+    "require": {
+        "fivefilters/readability.php": "^3.3"
+    }
+}
