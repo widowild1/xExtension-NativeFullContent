@@ -14,11 +14,25 @@ final class NativeFullContentExtension extends Minz_Extension {
     private ?RuleLoader $ruleLoader = null;
     /** @var array<string, string> Cache catégorie feedId => categoryId */
     private array $feedCategoryCache = [];
+    /** @var array<string, int> Compteur d'articles traités par flux lors d'une session cron */
+    private array $feedProcessedCounter = [];
 
     #[\Override]
     public function init(): void {
         $this->ruleLoader = new RuleLoader(__DIR__ . '/rules');
+
+        // Hook d'importation cron
         $this->registerHook('entry_before_insert', [$this, 'parseArticleBeforeInsert']);
+        
+        // Hook d'affichage : injection du bouton d'extraction manuelle
+        $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
+
+        // Contrôleur Minz pour les requêtes AJAX (Banc de test + Rechargement à la volée)
+        $this->registerController('nativeFullContent');
+
+        // Chargement des scripts et styles personnalisés
+        Minz_View::appendScript($this->getFileUrl('script.js', true));
+        Minz_View::appendStyle($this->getFileUrl('style.css', true));
     }
 
     public function getRuleLoader(): RuleLoader {
@@ -39,26 +53,23 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
 
             $enabledCategories = Minz_Request::param('enabled_categories', []);
-            if (!is_array($enabledCategories)) {
-                $enabledCategories = [];
-            }
-
             $enabledFeeds = Minz_Request::param('enabled_feeds', []);
-            if (!is_array($enabledFeeds)) {
-                $enabledFeeds = [];
-            }
-
             $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            $timeout = (int) Minz_Request::param('timeout', 15);
+            $timeout = (int) Minz_Request::param('timeout', 12);
+            $maxPerFeed = (int) Minz_Request::param('max_per_feed', 5);
 
             $this->setUserConfigurationValue('scope_mode', $scopeMode);
-            $this->setUserConfigurationValue('enabled_categories', array_map('strval', $enabledCategories));
-            $this->setUserConfigurationValue('enabled_feeds', array_map('strval', $enabledFeeds));
+            $this->setUserConfigurationValue('enabled_categories', is_array($enabledCategories) ? array_map('strval', $enabledCategories) : []);
+            $this->setUserConfigurationValue('enabled_feeds', is_array($enabledFeeds) ? array_map('strval', $enabledFeeds) : []);
             $this->setUserConfigurationValue('user_agent', $userAgent);
-            $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 15);
+            $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 12);
+            $this->setUserConfigurationValue('max_per_feed', $maxPerFeed > 0 ? $maxPerFeed : 5);
         }
     }
 
+    /**
+     * Traitement automatique lors du rafraîchissement des flux (avec protection anti-timeout)
+     */
     public function parseArticleBeforeInsert(?FreshRSS_Entry $entry): ?FreshRSS_Entry {
         if ($entry === null) {
             return null;
@@ -69,17 +80,66 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
+        // Garde-fou anti-timeout : limitation du nombre d'articles scrapés par flux
+        $maxPerFeed = (int) ($this->getUserConfigurationValue('max_per_feed') ?: 5);
+        $currentCount = $this->feedProcessedCounter[$feedId] ?? 0;
+        if ($currentCount >= $maxPerFeed) {
+            return $entry;
+        }
+
         $url = $entry->link();
         if (empty($url)) {
             return $entry;
         }
 
-        $html = $this->fetchUrl($url);
-        if ($html === '') {
+        $fullContent = $this->extractArticleContent($url);
+        if ($fullContent !== null && mb_strlen($fullContent) > mb_strlen($entry->content())) {
+            $entry->_content($fullContent);
+            $this->feedProcessedCounter[$feedId] = $currentCount + 1;
+        }
+
+        return $entry;
+    }
+
+    /**
+     * Injection du bouton « Récupérer le texte complet » dans l'en-tête de l'article
+     */
+    public function injectEntryButton(?FreshRSS_Entry $entry): ?FreshRSS_Entry {
+        if ($entry === null) {
+            return null;
+        }
+
+        $url = $entry->link();
+        if (empty($url)) {
             return $entry;
         }
 
-        // 1. Détection de règle par domaine
+        $id = (string) $entry->id();
+        $buttonHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . htmlspecialchars($id, ENT_QUOTES, 'UTF-8') . '">'
+                    . '<button type="button" class="btn btn-secondary native-btn-fetch" '
+                    . 'data-id="' . htmlspecialchars($id, ENT_QUOTES, 'UTF-8') . '" '
+                    . 'data-url="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">'
+                    . '📄 Récupérer le texte complet'
+                    . '</button>'
+                    . '</div>';
+
+        $entry->_content($buttonHtml . $entry->content());
+        return $entry;
+    }
+
+    /**
+     * Cœur d'extraction (Règle spécifique puis repli FiveFilters Readability)
+     */
+    public function extractArticleContent(string $url, ?array &$debugInfo = null): ?string {
+        $html = $this->fetchUrl($url);
+        if ($html === '') {
+            if ($debugInfo !== null) {
+                $debugInfo['error'] = 'Impossible de récupérer le code source HTML (HTTP ou Timeout).';
+            }
+            return null;
+        }
+
+        // 1. Analyse par règle spécifique de domaine
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -90,12 +150,15 @@ final class NativeFullContentExtension extends Minz_Extension {
             );
 
             if (mb_strlen($customContent) > 100) {
-                $entry->_content($customContent);
-                return $entry;
+                if ($debugInfo !== null) {
+                    $debugInfo['engine'] = 'Règle de domaine (' . $rule['_matched_domain'] . '.json)';
+                    $debugInfo['selector'] = $rule['content'];
+                }
+                return $customContent;
             }
         }
 
-        // 2. Repli automatique sur FiveFilters Readability
+        // 2. Repli sur FiveFilters Readability
         if (class_exists('FiveFilters\Readability\Readability')) {
             try {
                 $config = new Configuration();
@@ -107,16 +170,20 @@ final class NativeFullContentExtension extends Minz_Extension {
                     $content = $readability->getContent();
                     $content = SelectorExtractor::extract($content, $url, 'body');
 
-                    if (mb_strlen($content) > mb_strlen($entry->content())) {
-                        $entry->_content($content);
+                    if ($debugInfo !== null) {
+                        $debugInfo['engine'] = 'FiveFilters Readability (Algorithme heuristique)';
+                        $debugInfo['title'] = $readability->getTitle();
                     }
+                    return $content;
                 }
             } catch (\Throwable $e) {
-                return $entry;
+                if ($debugInfo !== null) {
+                    $debugInfo['error'] = 'Erreur d\'exécution Readability : ' . $e->getMessage();
+                }
             }
         }
 
-        return $entry;
+        return null;
     }
 
     protected function isFeedEligible(string $feedId): bool {
@@ -158,24 +225,26 @@ final class NativeFullContentExtension extends Minz_Extension {
                 return $catId;
             }
         } catch (\Throwable $e) {
-            // Ignorer l'erreur
+            // Ignorer
         }
 
         return null;
     }
 
-    protected function fetchUrl(string $url): string {
-        $userAgent = $this->getUserConfigurationValue('user_agent') ?: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 15);
+    public function fetchUrl(string $url): string {
+        $userAgent = (string) ($this->getUserConfigurationValue('user_agent') ?: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 12);
+
+        @set_time_limit($timeout + 5);
 
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_MAXREDIRS => 4,
             CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 4,
             CURLOPT_USERAGENT => $userAgent,
             CURLOPT_ENCODING => '',
             CURLOPT_SSL_VERIFYPEER => false,
