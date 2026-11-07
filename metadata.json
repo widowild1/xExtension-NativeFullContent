@@ -1,8 +1,8 @@
 {
   "name": "NativeFullContent",
   "author": "Fork Dev",
-  "description": "Extraction automatique du texte intégral (PHP 8 natif). Filtrage global, par catégorie ou par flux, avec règles prioritaires par domaine et repli FiveFilters Readability.",
-  "version": "1.3.1",
+  "description": "Scraper plein texte natif PHP 8 (sans conteneur). Règles par domaine, bac à sable de test, bouton à la volée, anti-timeout et filtres CMP.",
+  "version": "2.0.0",
   "entrypoint": "NativeFullContent",
   "type": "user"
 }
