@@ -38,26 +38,47 @@ if (class_exists('RuleLoader') && is_dir($rulesDir)) {
     $ruleLoader = new RuleLoader($rulesDir);
     $installedRules = $ruleLoader->getAllRules();
 }
-
-$testEndpointUrl = _url('nativeFullContent', 'test');
 ?>
+
+<style>
+.native-test-card {
+    background: #ffffff;
+    border: 1px solid #dcdcdc;
+    border-radius: 5px;
+    padding: 14px;
+    margin-top: 12px;
+}
+.native-test-card.error {
+    background: #fde8e8;
+    color: #c81e1e;
+    border-color: #f8b4b4;
+}
+.native-preview-box {
+    margin-top: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+    background: #fafafa;
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 4px;
+}
+</style>
 
 <h2>Configuration de FullText Native</h2>
 
-<!-- 1. BANC DE TEST EN DIRECT -->
+<!-- BANC DE TEST EN DIRECT -->
 <div class="box" style="background: #fdfdfd; border: 1px solid #d0d7de; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
     <h3 style="margin-top: 0;">🔬 Banc d'essai d'extraction (Test en direct)</h3>
     <p><em>Testez l'extraction d'un article sans altérer la base de données.</em></p>
     <div style="display: flex; gap: 10px;">
-        <input type="hidden" id="native_test_endpoint" value="<?php echo htmlspecialchars($testEndpointUrl, ENT_QUOTES, 'UTF-8'); ?>" />
-        <input type="url" id="native_test_url" placeholder="https://exemple.fr/mon-article..." style="flex: 1;" />
+        <input type="url" id="native_test_url" placeholder="https://exemple.fr/mon-article..." style="flex: 1; padding: 6px 10px;" />
         <button type="button" id="native_btn_run_test" class="btn btn-important" onclick="nativeRunTest()">Tester l'extraction</button>
     </div>
     <div id="native_test_output" style="display: none; margin-top: 15px;"></div>
 </div>
 
 <form action="<?php echo _url('extension', 'configure', 'e', $extName); ?>" method="post">
-    <input type="hidden" name="_csrf" value="<?php echo FreshRSS_Auth::csrfToken(); ?>" />
+    <input type="hidden" id="native_csrf_token" name="_csrf" value="<?php echo FreshRSS_Auth::csrfToken(); ?>" />
 
     <h3>Paramètres réseau & Anti-Timeout Cron</h3>
     <div class="form-group">
@@ -188,6 +209,88 @@ $testEndpointUrl = _url('nativeFullContent', 'test');
 </form>
 
 <script>
+function nativeRunTest() {
+    var urlInput = document.getElementById('native_test_url');
+    var url = urlInput ? urlInput.value.trim() : '';
+    var resultContainer = document.getElementById('native_test_output');
+    var btnTest = document.getElementById('native_btn_run_test');
+
+    if (!url) {
+        alert('Veuillez saisir une URL complète (ex: https://...).');
+        return;
+    }
+
+    if (btnTest) {
+        btnTest.disabled = true;
+        btnTest.innerHTML = 'Analyse en cours...';
+    }
+    if (resultContainer) {
+        resultContainer.style.display = 'block';
+        resultContainer.innerHTML = '<em>Connexion et extraction du document distant...</em>';
+    }
+
+    var csrfInput = document.getElementById('native_csrf_token');
+    var csrfToken = csrfInput ? csrfInput.value : '';
+
+    var formData = new FormData();
+    formData.append('ajax_action', 'test');
+    formData.append('url', url);
+    formData.append('_csrf', csrfToken);
+
+    // Envoi direct à la page de configuration courante
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function (res) {
+        return res.text().then(function (text) {
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                throw new Error('Réponse serveur inattendue (code ' + res.status + ') : ' + text.substring(0, 250));
+            }
+        });
+    })
+    .then(function (data) {
+        if (btnTest) {
+            btnTest.disabled = false;
+            btnTest.innerHTML = 'Tester l\'extraction';
+        }
+        if (!resultContainer) return;
+
+        if (data.success) {
+            resultContainer.innerHTML = 
+                '<div class="native-test-card">' +
+                    '<h4 style="margin-top: 0;">Résultat de l\'analyse</h4>' +
+                    '<ul>' +
+                        '<li><strong>Hôte :</strong> ' + data.debug.host + '</li>' +
+                        '<li><strong>Moteur utilisé :</strong> ' + data.debug.engine + '</li>' +
+                        '<li><strong>Longueur extraite :</strong> ' + data.length + ' caractères</li>' +
+                    '</ul>' +
+                    '<details style="margin-top: 10px;" open>' +
+                        '<summary style="cursor: pointer; font-weight: bold;">Aperçu du texte extrait</summary>' +
+                        '<div class="native-preview-box">' + data.html + '</div>' +
+                    '</details>' +
+                '</div>';
+        } else {
+            resultContainer.innerHTML = 
+                '<div class="native-test-card error">' +
+                    '<strong>Échec de l\'analyse :</strong> ' + (data.error || 'Erreur inconnue') +
+                '</div>';
+        }
+    })
+    .catch(function (err) {
+        if (btnTest) {
+            btnTest.disabled = false;
+            btnTest.innerHTML = 'Tester l\'extraction';
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = '<div class="native-test-card error">' + err.message + '</div>';
+        }
+    });
+}
+
 function toggleScopePanels() {
     var selected = document.querySelector('input[name="scope_mode"]:checked');
     var mode = selected ? selected.value : 'feed';
