@@ -8,48 +8,6 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
         }
     }
 
-    public function testAction() {
-        header('Content-Type: application/json; charset=UTF-8');
-
-        $url = trim((string) Minz_Request::param('url', ''));
-        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-            echo json_encode(['success' => false, 'error' => 'Veuillez saisir une URL valide (ex: https://...).']);
-            exit;
-        }
-
-        $extension = Minz_ExtensionManager::findExtension('NativeFullContent')
-                  ?: Minz_ExtensionManager::findExtension('xExtension-NativeFullContent');
-
-        if ($extension === null) {
-            echo json_encode(['success' => false, 'error' => 'Extension introuvable dans Minz_ExtensionManager.']);
-            exit;
-        }
-
-        $debugInfo = [
-            'host' => parse_url($url, PHP_URL_HOST),
-            'engine' => 'Aucun',
-        ];
-
-        $content = $extension->extractArticleContent($url, $debugInfo);
-
-        if ($content === null || trim($content) === '') {
-            echo json_encode([
-                'success' => false,
-                'error' => $debugInfo['error'] ?? 'Aucun contenu significatif n\'a pu être extrait.',
-                'debug' => $debugInfo
-            ]);
-            exit;
-        }
-
-        echo json_encode([
-            'success' => true,
-            'debug' => $debugInfo,
-            'length' => mb_strlen($content),
-            'html' => $content
-        ]);
-        exit;
-    }
-
     public function fetchAction() {
         header('Content-Type: application/json; charset=UTF-8');
 
@@ -63,7 +21,7 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
                   ?: Minz_ExtensionManager::findExtension('xExtension-NativeFullContent');
 
         if ($extension === null) {
-            echo json_encode(['success' => false, 'error' => 'Extension introuvable.']);
+            echo json_encode(['success' => false, 'error' => 'Extension introuvable dans Minz_ExtensionManager.']);
             exit;
         }
 
@@ -89,8 +47,8 @@ final class FreshExtension_nativeFullContent_Controller extends Minz_ActionContr
             exit;
         }
 
-        $buttonHtml = '<div class="native-fullcontent-header-bar" data-entry-id="' . $entryId . '">'
-                    . '<span class="native-badge-success">✅ Texte intégral récupéré (' . mb_strlen($fullContent) . ' caractères)</span>'
+        $buttonHtml = '<div class="native-fullcontent-header-bar" style="margin-bottom:12px;padding:6px 10px;background:#f7f9fa;border-left:3px solid #0066cc;" data-entry-id="' . $entryId . '">'
+                    . '<span class="native-badge-success" style="color:#137333;font-weight:bold;">✅ Texte intégral récupéré (' . mb_strlen($fullContent) . ' caractères)</span>'
                     . '</div>';
 
         $savedContent = $buttonHtml . $fullContent;
