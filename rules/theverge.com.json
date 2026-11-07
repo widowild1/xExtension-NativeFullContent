@@ -1,0 +1,4 @@
+{
+  "content": "div.c-entry-content, div.duet--article--article-body",
+  "strip": "aside, .c-entry-aside, .duet--article--newsletter"
+}
