@@ -1,18 +1,31 @@
 <?php
 
-// Chargement de l'autoloader embarqué de Composer
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
 }
+require_once __DIR__ . '/lib/RuleLoader.php';
+require_once __DIR__ . '/lib/SelectorExtractor.php';
 
 use FiveFilters\Readability\Readability;
 use FiveFilters\Readability\Configuration;
 
 final class NativeFullContentExtension extends Minz_Extension {
 
+    private ?RuleLoader $ruleLoader = null;
+    /** @var array<string, string> Cache catégorie */
+    private array $feedCategoryCache = [];
+
     #[\Override]
     public function init(): void {
+        $this->ruleLoader = new RuleLoader(__DIR__ . '/rules');
         $this->registerHook('entry_before_insert', [$this, 'parseArticleBeforeInsert']);
+    }
+
+    public function getRuleLoader(): RuleLoader {
+        if ($this->ruleLoader === null) {
+            $this->ruleLoader = new RuleLoader(__DIR__ . '/rules');
+        }
+        return $this->ruleLoader;
     }
 
     #[\Override]
@@ -20,10 +33,18 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerTranslates();
 
         if (Minz_Request::isPost()) {
+            $scopeMode = Minz_Request::paramString('scope_mode', 'feed');
+            if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
+                $scopeMode = 'feed';
+            }
+
+            $enabledCategories = Minz_Request::paramArray('enabled_categories', []);
             $enabledFeeds = Minz_Request::paramArray('enabled_feeds', []);
             $userAgent = Minz_Request::paramString('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
             $timeout = (int) Minz_Request::param('timeout', 15);
 
+            $this->setUserConfigurationValue('scope_mode', $scopeMode);
+            $this->setUserConfigurationValue('enabled_categories', $enabledCategories);
             $this->setUserConfigurationValue('enabled_feeds', $enabledFeeds);
             $this->setUserConfigurationValue('user_agent', $userAgent);
             $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 15);
@@ -35,18 +56,8 @@ final class NativeFullContentExtension extends Minz_Extension {
             return null;
         }
 
-        // Vérification si la classe FiveFilters est disponible
-        if (!class_exists('FiveFilters\Readability\Readability')) {
-            return $entry;
-        }
-
-        $enabledFeeds = $this->getUserConfigurationValue('enabled_feeds');
-        if (!is_array($enabledFeeds)) {
-            $enabledFeeds = [];
-        }
-
         $feedId = (string) $entry->feedId();
-        if (!in_array($feedId, $enabledFeeds, true)) {
+        if (!$this->isFeedEligible($feedId)) {
             return $entry;
         }
 
@@ -60,30 +71,89 @@ final class NativeFullContentExtension extends Minz_Extension {
             return $entry;
         }
 
-        try {
-            $config = new Configuration();
-            $config->setFixRelativeURLs(true);
-            $config->setOriginalURL($url);
+        // 1. Détection automatique du nom de domaine et chargement de la règle
+        $rule = $this->getRuleLoader()->getRuleForUrl($url);
+        if ($rule !== null) {
+            $customContent = SelectorExtractor::extract(
+                $html,
+                $url,
+                $rule['content'],
+                $rule['strip'] ?? ''
+            );
 
-            $readability = new Readability($config);
-            $parsed = $readability->parse($html);
-
-            if ($parsed) {
-                $fullContent = $readability->getContent();
-
-                // Post-traitement du HTML pour réparer le lazy-loading résiduel
-                $fullContent = $this->fixLazyLoadingImages($fullContent, $url);
-
-                if (mb_strlen($fullContent) > mb_strlen($entry->content())) {
-                    $entry->_content($fullContent);
-                }
+            if (mb_strlen($customContent) > 100) {
+                $entry->_content($customContent);
+                return $entry;
             }
-        } catch (\Throwable $e) {
-            // En cas d'erreur de parsing, on laisse l'article original intact
-            return $entry;
+        }
+
+        // 2. Repli automatique (fallback) sur FiveFilters Readability
+        if (class_exists('FiveFilters\Readability\Readability')) {
+            try {
+                $config = new Configuration();
+                $config->setFixRelativeURLs(true);
+                $config->setOriginalURL($url);
+
+                $readability = new Readability($config);
+                if ($readability->parse($html)) {
+                    $content = $readability->getContent();
+                    $content = SelectorExtractor::extract($content, $url, 'body');
+
+                    if (mb_strlen($content) > mb_strlen($entry->content())) {
+                        $entry->_content($content);
+                    }
+                }
+            } catch (\Throwable $e) {
+                return $entry;
+            }
         }
 
         return $entry;
+    }
+
+    protected function isFeedEligible(string $feedId): bool {
+        $scopeMode = (string) ($this->getUserConfigurationValue('scope_mode') ?: 'feed');
+
+        if ($scopeMode === 'all') {
+            return true;
+        }
+
+        if ($scopeMode === 'category') {
+            $enabledCategories = $this->getUserConfigurationValue('enabled_categories');
+            if (!is_array($enabledCategories) || empty($enabledCategories)) {
+                return false;
+            }
+
+            $catId = $this->getFeedCategoryId($feedId);
+            return $catId !== null && in_array($catId, $enabledCategories, true);
+        }
+
+        $enabledFeeds = $this->getUserConfigurationValue('enabled_feeds');
+        if (!is_array($enabledFeeds)) {
+            return false;
+        }
+
+        return in_array($feedId, $enabledFeeds, true);
+    }
+
+    protected function getFeedCategoryId(string $feedId): ?string {
+        if (isset($this->feedCategoryCache[$feedId])) {
+            return $this->feedCategoryCache[$feedId];
+        }
+
+        try {
+            $feedDAO = FreshRSS_Factory::createFeedDao();
+            $feed = $feedDAO->searchById((int) $feedId);
+            if ($feed !== null) {
+                $catId = (string) $feed->category();
+                $this->feedCategoryCache[$feedId] = $catId;
+                return $catId;
+            }
+        } catch (\Throwable $e) {
+            // Ignorer l'erreur
+        }
+
+        return null;
     }
 
     protected function fetchUrl(string $url): string {
@@ -99,7 +169,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT => $userAgent,
-            CURLOPT_ENCODING => '', // Active la décompression automatique gzip/deflate
+            CURLOPT_ENCODING => '',
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER => [
@@ -118,48 +188,5 @@ final class NativeFullContentExtension extends Minz_Extension {
         }
 
         return (string) $content;
-    }
-
-    protected function fixLazyLoadingImages(string $html, string $baseUrl): string {
-        if (trim($html) === '') {
-            return '';
-        }
-
-        libxml_use_internal_errors(true);
-        $dom = new DOMDocument('1.0', 'UTF-8');
-        $encodedHtml = mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8');
-        $dom->loadHTML('<?xml encoding="UTF-8">' . $encodedHtml, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        libxml_clear_errors();
-
-        $images = $dom->getElementsByTagName('img');
-        $modified = false;
-
-        foreach ($images as $img) {
-            if ($img->hasAttribute('data-src')) {
-                $img->setAttribute('src', $img->getAttribute('data-src'));
-                $modified = true;
-            } elseif ($img->hasAttribute('data-original')) {
-                $img->setAttribute('src', $img->getAttribute('data-original'));
-                $modified = true;
-            } elseif ($img->hasAttribute('data-lazy-src')) {
-                $img->setAttribute('src', $img->getAttribute('data-lazy-src'));
-                $modified = true;
-            }
-        }
-
-        if (!$modified) {
-            return $html;
-        }
-
-        $body = $dom->getElementsByTagName('body')->item(0);
-        if ($body !== null) {
-            $output = '';
-            foreach ($body->childNodes as $child) {
-                $output .= $dom->saveHTML($child);
-            }
-            return trim($output);
-        }
-
-        return $dom->saveHTML();
     }
 }
