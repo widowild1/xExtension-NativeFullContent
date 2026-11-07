@@ -45,9 +45,9 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerTranslates();
 
         if (Minz_Request::isPost()) {
-            $op = (string) Minz_Request::param('op', 'save');
+            $op = (string) Minz_Request::param('op', '');
 
-            // 1. Traitement du banc d'essai (Redirection vers soi-même pour bloquer le forward de FreshRSS)
+            // 1. Traitement STRICT du banc d'essai
             if ($op === 'test') {
                 $testUrl = trim((string) Minz_Request::param('test_url', ''));
                 if ($testUrl !== '' && filter_var($testUrl, FILTER_VALIDATE_URL)) {
@@ -78,6 +78,33 @@ final class NativeFullContentExtension extends Minz_Extension {
                 header('Location: ' . _url('extension', 'configure', 'e', $this->getName()));
                 exit;
             }
+
+            // 2. Sauvegarde UNIQUEMENT si le bouton "Enregistrer les options" a été cliqué
+            if ($op === 'save') {
+                $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
+                if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
+                    $scopeMode = 'feed';
+                }
+
+                $enabledCategories = Minz_Request::param('enabled_categories', []);
+                $enabledFeeds = Minz_Request::param('enabled_feeds', []);
+                $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+                $timeout = (int) Minz_Request::param('timeout', 12);
+                $maxPerFeed = (int) Minz_Request::param('max_per_feed', 5);
+
+                $this->setUserConfigurationValue('scope_mode', $scopeMode);
+                $this->setUserConfigurationValue('enabled_categories', is_array($enabledCategories) ? array_map('strval', $enabledCategories) : []);
+                $this->setUserConfigurationValue('enabled_feeds', is_array($enabledFeeds) ? array_map('strval', $enabledFeeds) : []);
+                $this->setUserConfigurationValue('user_agent', $userAgent);
+                $this->setUserConfigurationValue('timeout', $timeout > 0 ? $timeout : 12);
+                $this->setUserConfigurationValue('max_per_feed', $maxPerFeed > 0 ? $maxPerFeed : 5);
+
+                $_SESSION['native_save_notice'] = true;
+                header('Location: ' . _url('extension', 'configure', 'e', $this->getName()));
+                exit;
+            }
+        }
+    }
 
             // 2. Sauvegarde des options
             $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
