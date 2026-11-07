@@ -31,9 +31,6 @@ final class NativeFullContentExtension extends Minz_Extension {
         $this->registerHook('entry_before_display', [$this, 'injectEntryButton']);
 
         $this->registerController('nativeFullContent');
-
-        Minz_View::appendScript($this->getFileUrl('script.js', true));
-        Minz_View::appendStyle($this->getFileUrl('style.css', true));
     }
 
     public function getRuleLoader(): RuleLoader {
@@ -49,8 +46,9 @@ final class NativeFullContentExtension extends Minz_Extension {
 
         if (Minz_Request::isPost()) {
             $op = (string) Minz_Request::param('op', '');
+            $targetUrl = $_SERVER['REQUEST_URI'] ?? _url('extension', 'configure', ['e' => $this->getName()]);
 
-            // 1. Banc d'essai : isolation stricte sans altérer les réglages utilisateur
+            // 1. Banc d'essai : isolation sans altérer les réglages de l'utilisateur
             if ($op === 'test') {
                 $testUrl = trim((string) Minz_Request::param('test_url', ''));
                 if ($testUrl !== '' && filter_var($testUrl, FILTER_VALIDATE_URL)) {
@@ -78,11 +76,11 @@ final class NativeFullContentExtension extends Minz_Extension {
                 }
                 $_SESSION['native_test_url'] = $testUrl;
 
-                header('Location: ' . _url('extension', 'configure', 'e', $this->getName()));
+                header('Location: ' . $targetUrl);
                 exit;
             }
 
-            // 2. Sauvegarde des options : exécutée uniquement au clic sur le bouton du formulaire principal
+            // 2. Sauvegarde des options : exécutée uniquement au clic sur "Enregistrer les options"
             if ($op === 'save') {
                 $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
                 if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -103,7 +101,7 @@ final class NativeFullContentExtension extends Minz_Extension {
                 $this->setUserConfigurationValue('max_per_feed', $maxPerFeed > 0 ? $maxPerFeed : 5);
 
                 $_SESSION['native_save_notice'] = true;
-                header('Location: ' . _url('extension', 'configure', 'e', $this->getName()));
+                header('Location: ' . $targetUrl);
                 exit;
             }
         }
@@ -171,7 +169,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             return null;
         }
 
-        // 1. Détection prioritaire par règle de domaine (rules/*.json)
+        // 1. Règles par domaine (rules/<domaine>.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($url);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -190,7 +188,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             }
         }
 
-        // 2. Détection dynamique de Readability (versions 3 et 4)
+        // 2. Détection dynamique de Readability
         $readabilityClass = null;
         $configClass = null;
 
