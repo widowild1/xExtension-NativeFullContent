@@ -1,10 +1,13 @@
 <?php
 require_once __DIR__ . '/lib/RuleLoader.php';
 
-/** @var NativeFullContentExtension|null $extension */
-$extension = Minz_ExtensionManager::findExtension('NativeFullContent');
-if ($extension === null && isset($this->extension) && $this->extension instanceof Minz_Extension) {
+$extension = null;
+if (isset($this->extension) && $this->extension instanceof Minz_Extension) {
     $extension = $this->extension;
+} elseif (Minz_ExtensionManager::findExtension('NativeFullContent') !== null) {
+    $extension = Minz_ExtensionManager::findExtension('NativeFullContent');
+} elseif (Minz_ExtensionManager::findExtension('xExtension-NativeFullContent') !== null) {
+    $extension = Minz_ExtensionManager::findExtension('xExtension-NativeFullContent');
 }
 
 $extName = $extension !== null ? $extension->getName() : 'NativeFullContent';
@@ -17,25 +20,25 @@ $timeout = 15;
 
 if ($extension !== null) {
     $scopeMode = (string) ($extension->getUserConfigurationValue('scope_mode') ?: 'feed');
-    $enabledCategories = $extension->getUserConfigurationValue('enabled_categories');
-    if (!is_array($enabledCategories)) {
-        $enabledCategories = [];
-    }
+    
+    $rawCats = $extension->getUserConfigurationValue('enabled_categories');
+    $enabledCategories = is_array($rawCats) ? array_map('strval', $rawCats) : [];
 
-    $enabledFeeds = $extension->getUserConfigurationValue('enabled_feeds');
-    if (!is_array($enabledFeeds)) {
-        $enabledFeeds = [];
-    }
+    $rawFeeds = $extension->getUserConfigurationValue('enabled_feeds');
+    $enabledFeeds = is_array($rawFeeds) ? array_map('strval', $rawFeeds) : [];
 
     $userAgent = (string) ($extension->getUserConfigurationValue('user_agent') ?: $userAgent);
     $timeout = (int) ($extension->getUserConfigurationValue('timeout') ?: 15);
 }
 
-// Chargement robuste des catégories et de leurs flux
-$feedDAO = FreshRSS_Factory::createFeedDao();
-$categories = $feedDAO->selectAllWithCategory();
+// Récupération officielle des catégories et de leurs flux
+$categoryDAO = FreshRSS_Factory::createCategoryDao();
+$categories = $categoryDAO->listCategories(true);
+if (!is_array($categories)) {
+    $categories = [];
+}
 
-// Chargement des règles modulaires par domaine
+// Chargement des règles par domaine
 $rulesDir = __DIR__ . '/rules';
 $installedRules = [];
 if (class_exists('RuleLoader') && is_dir($rulesDir)) {
@@ -71,62 +74,82 @@ if (class_exists('RuleLoader') && is_dir($rulesDir)) {
         <div class="group-controls">
             <label class="radio">
                 <input type="radio" name="scope_mode" value="all" onchange="toggleScopePanels()" <?php echo $scopeMode === 'all' ? 'checked' : ''; ?> />
-                <strong>La totalité des flux</strong> (traiter automatiquement tous les articles de tous les flux)
+                <strong>La totalité des flux</strong> (traiter automatiquement tous les flux)
             </label><br />
             <label class="radio">
                 <input type="radio" name="scope_mode" value="category" onchange="toggleScopePanels()" <?php echo $scopeMode === 'category' ? 'checked' : ''; ?> />
-                <strong>Par catégorie</strong> (traiter les flux des catégories sélectionnées)
+                <strong>Par catégorie</strong> (traiter tous les flux appartenant aux catégories sélectionnées)
             </label><br />
             <label class="radio">
                 <input type="radio" name="scope_mode" value="feed" onchange="toggleScopePanels()" <?php echo $scopeMode === 'feed' ? 'checked' : ''; ?> />
-                <strong>À l'unité</strong> (sélection manuelle des flux spécifiques)
+                <strong>À l'unité</strong> (sélection manuelle au cas par cas)
             </label>
         </div>
     </div>
 
     <!-- Panel Catégories -->
-    <div id="panel_category" style="<?php echo $scopeMode === 'category' ? '' : 'display: none;'; ?> margin-top: 15px;">
-        <h4>Sélectionner les catégories :</h4>
-        <div style="max-height: 250px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
-            <?php foreach ($categories as $category): ?>
-                <?php $feedList = is_array($category->feeds()) ? $category->feeds() : []; ?>
-                <label class="checkbox">
-                    <input type="checkbox" name="enabled_categories[]" value="<?php echo (string)$category->id(); ?>" <?php echo in_array((string)$category->id(), $enabledCategories, true) ? 'checked' : ''; ?> />
-                    <strong><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></strong>
-                    <small style="color: #666;">(<?php echo count($feedList); ?> flux)</small>
-                </label><br />
-            <?php endforeach; ?>
+    <div id="panel_category" style="<?php echo $scopeMode === 'category' ? 'display: block;' : 'display: none;'; ?> margin-top: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin: 0;">Sélectionner les catégories :</h4>
+            <div>
+                <button type="button" class="btn btn-smaller" onclick="toggleAllCheckboxes('panel_category', true)">Tout cocher</button>
+                <button type="button" class="btn btn-smaller" onclick="toggleAllCheckboxes('panel_category', false)">Tout décocher</button>
+            </div>
+        </div>
+        <div style="max-height: 250px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #fafafa;">
+            <?php if (empty($categories)): ?>
+                <em>Aucune catégorie trouvée.</em>
+            <?php else: ?>
+                <?php foreach ($categories as $category): ?>
+                    <?php $feedList = is_array($category->feeds()) ? $category->feeds() : []; ?>
+                    <label class="checkbox" style="display: block; margin-bottom: 4px;">
+                        <input type="checkbox" name="enabled_categories[]" value="<?php echo (string)$category->id(); ?>" <?php echo in_array((string)$category->id(), $enabledCategories, true) ? 'checked' : ''; ?> />
+                        <strong><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></strong>
+                        <small style="color: #666;">(<?php echo count($feedList); ?> flux)</small>
+                    </label>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </div>
 
     <!-- Panel Flux individuels -->
-    <div id="panel_feed" style="<?php echo $scopeMode === 'feed' ? '' : 'display: none;'; ?> margin-top: 15px;">
-        <h4>Sélectionner les flux :</h4>
-        <div style="max-height: 350px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
-            <?php foreach ($categories as $category): ?>
-                <?php $feedList = is_array($category->feeds()) ? $category->feeds() : []; ?>
-                <h5 style="margin: 8px 0 4px 0;"><?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?></h5>
-                <div style="margin-left: 20px; margin-bottom: 10px;">
-                    <?php if (empty($feedList)): ?>
-                        <em style="color: #888; font-size: 0.9em;">Aucun flux dans cette catégorie.</em><br />
-                    <?php else: ?>
-                        <?php foreach ($feedList as $feed): ?>
-                            <label class="checkbox">
-                                <input type="checkbox" name="enabled_feeds[]" value="<?php echo (string)$feed->id(); ?>" <?php echo in_array((string)$feed->id(), $enabledFeeds, true) ? 'checked' : ''; ?> />
-                                <?php echo htmlspecialchars($feed->name(), ENT_QUOTES, 'UTF-8'); ?>
-                            </label><br />
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
-            <?php endforeach; ?>
+    <div id="panel_feed" style="<?php echo $scopeMode === 'feed' ? 'display: block;' : 'display: none;'; ?> margin-top: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin: 0;">Sélectionner les flux à l'unité :</h4>
+            <div>
+                <button type="button" class="btn btn-smaller" onclick="toggleAllCheckboxes('panel_feed', true)">Tout cocher</button>
+                <button type="button" class="btn btn-smaller" onclick="toggleAllCheckboxes('panel_feed', false)">Tout décocher</button>
+            </div>
+        </div>
+        <div style="max-height: 350px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #fafafa;">
+            <?php if (empty($categories)): ?>
+                <em>Aucun flux disponible.</em>
+            <?php else: ?>
+                <?php foreach ($categories as $category): ?>
+                    <?php $feedList = is_array($category->feeds()) ? $category->feeds() : []; ?>
+                    <h5 style="margin: 10px 0 4px 0; border-bottom: 1px solid #ddd; padding-bottom: 2px;">
+                        📁 <?php echo htmlspecialchars($category->name(), ENT_QUOTES, 'UTF-8'); ?>
+                    </h5>
+                    <div style="margin-left: 15px; margin-bottom: 8px;">
+                        <?php if (empty($feedList)): ?>
+                            <em style="color: #888; font-size: 0.9em;">Aucun flux dans cette catégorie.</em><br />
+                        <?php else: ?>
+                            <?php foreach ($feedList as $feed): ?>
+                                <label class="checkbox" style="display: block; margin-bottom: 3px;">
+                                    <input type="checkbox" name="enabled_feeds[]" value="<?php echo (string)$feed->id(); ?>" <?php echo in_array((string)$feed->id(), $enabledFeeds, true) ? 'checked' : ''; ?> />
+                                    <?php echo htmlspecialchars($feed->name(), ENT_QUOTES, 'UTF-8'); ?>
+                                </label>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </div>
 
     <hr />
 
     <h3>Règles par domaine actives (<code>rules/*.json</code>)</h3>
-    <p><em>Ces règles sont détectées automatiquement depuis les fichiers de votre dépôt Forgejo. Pour ajouter un site, créez un fichier <code>rules/nom-du-domaine.json</code>. Si un site n'est pas listé, FiveFilters Readability s'exécutera automatiquement.</em></p>
-
     <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9em;">
         <thead>
             <tr style="background: #f0f0f0; border-bottom: 2px solid #ccc;">
@@ -159,8 +182,24 @@ if (class_exists('RuleLoader') && is_dir($rulesDir)) {
 
 <script>
 function toggleScopePanels() {
-    var mode = document.querySelector('input[name="scope_mode"]:checked').value;
-    document.getElementById('panel_category').style.display = (mode === 'category') ? 'block' : 'none';
-    document.getElementById('panel_feed').style.display = (mode === 'feed') ? 'block' : 'none';
+    var selected = document.querySelector('input[name="scope_mode"]:checked');
+    var mode = selected ? selected.value : 'feed';
+    var catPanel = document.getElementById('panel_category');
+    var feedPanel = document.getElementById('panel_feed');
+    if (catPanel) {
+        catPanel.style.display = (mode === 'category') ? 'block' : 'none';
+    }
+    if (feedPanel) {
+        feedPanel.style.display = (mode === 'feed') ? 'block' : 'none';
+    }
+}
+
+function toggleAllCheckboxes(containerId, checkState) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    var checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    for (var i = 0; i < checkboxes.length; i++) {
+        checkboxes[i].checked = checkState;
+    }
 }
 </script>
