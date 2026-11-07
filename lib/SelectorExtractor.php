@@ -2,6 +2,27 @@
 
 final class SelectorExtractor {
 
+    /**
+     * Sélecteurs d'éléments indésirables éliminés globalement sur tous les sites
+     */
+    private static array $globalStripSelectors = [
+        // Bannières de cookies / CMP
+        '.didomi-popup-container', '#didomi-host', '.didomi-consent-popup',
+        '#axeptio-overlay', '.axeptio_mount',
+        '#onetrust-consent-sdk', '#onetrust-banner-sdk',
+        '.qc-cmp2-container', '#CybotCookiebotDialog',
+        '#tarteaucitronRoot', '.cookie-banner', '.cookie-consent', '.cookies-notice',
+        // Partages réseaux sociaux
+        '.sharedaddy', '.social-share', '.share-box', '.post-share',
+        '.social-buttons', '.share-buttons', '.article-share',
+        // Inscriptions newsletter
+        '.newsletter-signup', '.newsletter-form', '.subscribe-box',
+        '.mailchimp-form', '.widget_newsletter', '.article-newsletter',
+        // Bannières et réclames
+        '.ad-wrapper', '.advertisement', '.pub-container',
+        '.outbrain', '.taboola', '.inline-ad', '.google-anno-skip'
+    ];
+
     public static function extract(string $html, string $url, string $contentSelector, string $stripSelector = ''): string {
         if (trim($html) === '' || trim($contentSelector) === '') {
             return '';
@@ -15,26 +36,21 @@ final class SelectorExtractor {
 
         $xpath = new DOMXPath($dom);
 
-        // 1. Suppression des éléments inutiles
+        // 1. Élimination du filtre global anti-CMP / newsletter / pubs
+        $globalStripXPath = self::cssToXPath(implode(', ', self::$globalStripSelectors));
+        if ($globalStripXPath !== '') {
+            self::removeNodesByXPath($xpath, $globalStripXPath);
+        }
+
+        // 2. Élimination des éléments spécifiques définis dans la règle du domaine
         if ($stripSelector !== '') {
-            $stripXPath = self::cssToXPath($stripSelector);
-            if ($stripXPath !== '') {
-                $nodesToRemove = $xpath->query($stripXPath);
-                if ($nodesToRemove !== false) {
-                    $elements = [];
-                    foreach ($nodesToRemove as $node) {
-                        $elements[] = $node;
-                    }
-                    foreach ($elements as $el) {
-                        if ($el->parentNode) {
-                            $el->parentNode->removeChild($el);
-                        }
-                    }
-                }
+            $customStripXPath = self::cssToXPath($stripSelector);
+            if ($customStripXPath !== '') {
+                self::removeNodesByXPath($xpath, $customStripXPath);
             }
         }
 
-        // 2. Extraction du conteneur d'article
+        // 3. Extraction du conteneur de texte principal
         $contentXPath = self::cssToXPath($contentSelector);
         if ($contentXPath === '') {
             return '';
@@ -56,8 +72,22 @@ final class SelectorExtractor {
             return '';
         }
 
-        // 3. Normalisation des images et liens relatifs
         return self::normalizeFragment($extractedHtml, $url);
+    }
+
+    private static function removeNodesByXPath(DOMXPath $xpath, string $expression): void {
+        $nodes = $xpath->query($expression);
+        if ($nodes !== false) {
+            $elements = [];
+            foreach ($nodes as $node) {
+                $elements[] = $node;
+            }
+            foreach ($elements as $el) {
+                if ($el->parentNode) {
+                    $el->parentNode->removeChild($el);
+                }
+            }
+        }
     }
 
     public static function cssToXPath(string $selector): string {
@@ -74,6 +104,9 @@ final class SelectorExtractor {
         $xpathExpressions = [];
 
         foreach ($groups as $group) {
+            if ($group === '') {
+                continue;
+            }
             $tokens = preg_split('/\s+/', $group);
             $subXPath = '';
             foreach ($tokens as $token) {
@@ -110,14 +143,18 @@ final class SelectorExtractor {
         return '*';
     }
 
-    private static function normalizeFragment(string $fragmentHtml, string $baseUrl): string {
+    public static function normalizeFragment(string $fragmentHtml, string $baseUrl): string {
+        if (trim($fragmentHtml) === '') {
+            return '';
+        }
+
         libxml_use_internal_errors(true);
         $dom = new DOMDocument('1.0', 'UTF-8');
         $encodedHtml = mb_convert_encoding($fragmentHtml, 'HTML-ENTITIES', 'UTF-8');
         $dom->loadHTML('<?xml encoding="UTF-8"><body>' . $encodedHtml . '</body>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         libxml_clear_errors();
 
-        // Résolution du lazy loading et images
+        // Résolution du lazy loading et des chemins d'images relatifs
         $images = $dom->getElementsByTagName('img');
         foreach ($images as $img) {
             if ($img->hasAttribute('data-src')) {
@@ -134,7 +171,7 @@ final class SelectorExtractor {
             }
         }
 
-        // Liens relatifs
+        // Liens relatifs en liens absolus
         $links = $dom->getElementsByTagName('a');
         foreach ($links as $a) {
             $href = $a->getAttribute('href');
