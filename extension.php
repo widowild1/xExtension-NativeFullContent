@@ -102,7 +102,7 @@ final class NativeFullContentExtension extends Minz_Extension {
 
                 $enabledCategories = Minz_Request::param('enabled_categories', []);
                 $enabledFeeds = Minz_Request::param('enabled_feeds', []);
-                $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+                $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0');
                 $timeout = (int) Minz_Request::param('timeout', 15);
                 $maxPerFeed = (int) Minz_Request::param('max_per_feed', 5);
 
@@ -177,7 +177,12 @@ final class NativeFullContentExtension extends Minz_Extension {
         $cleanUrl = html_entity_decode(trim($url), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $html = $this->fetchUrl($cleanUrl, $debugInfo);
 
+        // Fallback immédiat si le serveur distant renvoie 403, 429 ou un refus HTML
         if ($html === '') {
+            $wpContent = $this->fetchViaWordPressApi($cleanUrl, $debugInfo);
+            if ($wpContent !== null) {
+                return $wpContent;
+            }
             return null;
         }
 
@@ -243,9 +248,72 @@ final class NativeFullContentExtension extends Minz_Extension {
                     $debugInfo['error'] = 'Erreur Readability : ' . $e->getMessage();
                 }
             }
-        } else {
-            if ($debugInfo !== null) {
-                $debugInfo['error'] = 'Bibliothèque Readability absente. Vérifiez autoload.php.';
+        }
+
+        // 3. Fallback secondaire via API WordPress si Readability échoue sur le HTML
+        $wpContent = $this->fetchViaWordPressApi($cleanUrl, $debugInfo);
+        if ($wpContent !== null) {
+            return $wpContent;
+        }
+
+        return null;
+    }
+
+    /**
+     * Tente de récupérer l'article via l'API REST WordPress (Automattic / VIP / REST local)
+     */
+    public function fetchViaWordPressApi(string $url, ?array &$debugInfo = null): ?string {
+        $parsed = parse_url($url);
+        $host = (string) ($parsed['host'] ?? '');
+        $path = trim((string) ($parsed['path'] ?? ''), '/');
+        $slug = basename($path);
+
+        if ($host === '' || $slug === '' || $slug === $host) {
+            return null;
+        }
+
+        $endpoints = [
+            'https://public-api.wordpress.com/wp/v2/sites/' . urlencode($host) . '/posts?slug=' . urlencode($slug),
+            'https://' . $host . '/wp-json/wp/v2/posts?slug=' . urlencode($slug),
+        ];
+
+        foreach ($endpoints as $apiUrl) {
+            $ch = curl_init($apiUrl);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 5,
+                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_HTTPHEADER     => [
+                    'Accept: application/json',
+                ],
+            ]);
+
+            $jsonStr = curl_exec($ch);
+            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && is_string($jsonStr) && $jsonStr !== '') {
+                $data = json_decode($jsonStr, true);
+                if (is_array($data) && !empty($data[0]['content']['rendered'])) {
+                    $rawHtml = (string) $data[0]['content']['rendered'];
+                    $content = SelectorExtractor::cleanAndNormalize($rawHtml, $url);
+
+                    if (mb_strlen($content) > 100) {
+                        if ($debugInfo !== null) {
+                            $isWpCom = str_contains($apiUrl, 'public-api.wordpress.com');
+                            $debugInfo['engine'] = 'API WordPress REST (' . ($isWpCom ? 'WordPress.com' : 'Locale') . ')';
+                            if (!empty($data[0]['title']['rendered'])) {
+                                $debugInfo['title'] = html_entity_decode((string) $data[0]['title']['rendered'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                            }
+                            unset($debugInfo['error']);
+                        }
+                        return $content;
+                    }
+                }
             }
         }
 
@@ -298,7 +366,7 @@ final class NativeFullContentExtension extends Minz_Extension {
     }
 
     public function fetchUrl(string $url, ?array &$debugInfo = null): string {
-        $defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        $defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0';
         $userAgent = (string) ($this->getUserConfigurationValue('user_agent') ?: $defaultUa);
         $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 15);
 
@@ -306,7 +374,6 @@ final class NativeFullContentExtension extends Minz_Extension {
 
         $parsed = parse_url($url);
         $host = $parsed['host'] ?? '';
-        $origin = ($parsed['scheme'] ?? 'https') . '://' . $host;
 
         $ch = curl_init();
         curl_setopt_array($ch, [
@@ -318,7 +385,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_CONNECTTIMEOUT => 6,
             CURLOPT_USERAGENT => $userAgent,
             CURLOPT_ENCODING => '', // Gzip, deflate, br
-            CURLOPT_COOKIEFILE => '', // Active le moteur de cookies en mémoire pour les redirections
+            CURLOPT_COOKIEFILE => '', // Active le moteur de cookies mémoire pour les redirections
             CURLOPT_AUTOREFERER => true,
             CURLOPT_REFERER => 'https://www.google.com/',
             CURLOPT_SSL_VERIFYPEER => false,
@@ -326,15 +393,12 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_HTTPHEADER => [
                 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Accept-Language: fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
-                'sec-ch-ua: "Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                'sec-ch-ua-mobile: ?0',
-                'sec-ch-ua-platform: "Windows"',
-                'sec-fetch-dest: document',
-                'sec-fetch-mode: navigate',
-                'sec-fetch-site: cross-site',
-                'sec-fetch-user: ?1',
-                'upgrade-insecure-requests: 1',
-                'cache-control: max-age=0'
+                'Sec-Fetch-Dest: document',
+                'Sec-Fetch-Mode: navigate',
+                'Sec-Fetch-Site: cross-site',
+                'Sec-Fetch-User: ?1',
+                'Upgrade-Insecure-Requests: 1',
+                'Cache-Control: max-age=0'
             ]
         ]);
 
