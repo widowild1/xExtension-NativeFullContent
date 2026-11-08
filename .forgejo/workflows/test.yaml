@@ -1,6 +1,12 @@
 name: "Test Runner"
 on: [workflow_dispatch]
 
+server:
+  connections:
+    forgejo:
+      url: https://forgejo.mojo.ovh/
+      uuid: 4a3e8344-e75d-472a-aba3-4308bbe7abc5
+      token: 7af1973a6dcc8badf802f5cf3451622da41c1bd7
 jobs:
   diagnostic:
     runs-on: LXC-forgejo
