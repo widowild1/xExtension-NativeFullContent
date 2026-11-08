@@ -1,19 +1,19 @@
-name: "Mise à jour automatique Readability"
+name: "Mise à jour Readability -> Forgejo"
 
 on:
   schedule:
-    # Exécution chaque lundi à 04h00 UTC
+    # Exécution automatique chaque lundi matin à 04h00
     - cron: '0 4 * * 1'
-  workflow_dispatch: # Permet de déclencher la mise à jour manuellement via l'interface Forgejo
+  workflow_dispatch: # Permet aussi un déclenchement manuel en 1 clic dans Forgejo
 
 jobs:
-  update-dependencies:
+  bump-readability:
     runs-on: native
     steps:
-      - name: Récupérer le code
+      - name: Récupérer le dépôt
         uses: actions/checkout@v4
 
-      - name: Installer PHP et Composer
+      - name: Préparer PHP & Composer
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
@@ -23,14 +23,14 @@ jobs:
         run: |
           composer update fivefilters/readability.php --no-interaction --optimize-autoloader --no-dev
 
-      - name: Détecter et commiter les modifications
+      - name: Commiter et pousser sur Forgejo
         run: |
-          if [ -n "$(git status --porcelain composer.lock vendor/)" ]; then
-            git config user.name "forgejo-actions[bot]"
-            git config user.email "actions@forgejo.local"
+          if [ -n "$(git status --porcelain composer.json composer.lock vendor/)" ]; then
+            git config user.name "forgejo-bot"
+            git config user.email "bot@forgejo.local"
             git add composer.json composer.lock vendor/
-            git commit -m "chore(deps): bump fivefilters/readability.php to latest"
+            git commit -m "chore(deps): mise à jour fivefilters/readability.php"
             git push origin main
           else
-            echo "Readability est déjà sur sa dernière version."
+            echo "Readability est déjà à jour."
           fi
