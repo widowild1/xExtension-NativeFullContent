@@ -50,7 +50,6 @@ final class NativeFullContentExtension extends Minz_Extension {
         if (Minz_Request::isPost()) {
             $op = (string) Minz_Request::param('op', '');
 
-            // 1. Banc d'essai : rendu isolé dans l'iframe cible (ne ferme jamais le panneau)
             if ($op === 'test') {
                 $testUrl = trim((string) Minz_Request::param('test_url', ''));
                 header('Content-Type: text/html; charset=UTF-8');
@@ -95,7 +94,6 @@ final class NativeFullContentExtension extends Minz_Extension {
                 exit;
             }
 
-            // 2. Sauvegarde des options : exécutée uniquement au clic sur "Enregistrer les options"
             if ($op === 'save') {
                 $scopeMode = (string) Minz_Request::param('scope_mode', 'feed');
                 if (!in_array($scopeMode, ['all', 'category', 'feed'], true)) {
@@ -104,7 +102,7 @@ final class NativeFullContentExtension extends Minz_Extension {
 
                 $enabledCategories = Minz_Request::param('enabled_categories', []);
                 $enabledFeeds = Minz_Request::param('enabled_feeds', []);
-                $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+                $userAgent = (string) Minz_Request::param('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                 $timeout = (int) Minz_Request::param('timeout', 15);
                 $maxPerFeed = (int) Minz_Request::param('max_per_feed', 5);
 
@@ -183,7 +181,7 @@ final class NativeFullContentExtension extends Minz_Extension {
             return null;
         }
 
-        // 1. Règles par domaine (rules/*.json)
+        // 1. Règles spécifiques par domaine (rules/*.json)
         $rule = $this->getRuleLoader()->getRuleForUrl($cleanUrl);
         if ($rule !== null) {
             $customContent = SelectorExtractor::extract(
@@ -300,10 +298,15 @@ final class NativeFullContentExtension extends Minz_Extension {
     }
 
     public function fetchUrl(string $url, ?array &$debugInfo = null): string {
-        $userAgent = (string) ($this->getUserConfigurationValue('user_agent') ?: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        $defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        $userAgent = (string) ($this->getUserConfigurationValue('user_agent') ?: $defaultUa);
         $timeout = (int) ($this->getUserConfigurationValue('timeout') ?: 15);
 
         @set_time_limit($timeout + 5);
+
+        $parsed = parse_url($url);
+        $host = $parsed['host'] ?? '';
+        $origin = ($parsed['scheme'] ?? 'https') . '://' . $host;
 
         $ch = curl_init();
         curl_setopt_array($ch, [
@@ -314,17 +317,24 @@ final class NativeFullContentExtension extends Minz_Extension {
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => 6,
             CURLOPT_USERAGENT => $userAgent,
-            CURLOPT_ENCODING => '',
+            CURLOPT_ENCODING => '', // Gzip, deflate, br
+            CURLOPT_COOKIEFILE => '', // Active le moteur de cookies en mémoire pour les redirections
+            CURLOPT_AUTOREFERER => true,
+            CURLOPT_REFERER => 'https://www.google.com/',
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_HTTPHEADER => [
                 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language: fr,fr-FR;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Sec-Fetch-Dest: document',
-                'Sec-Fetch-Mode: navigate',
-                'Sec-Fetch-Site: none',
-                'Upgrade-Insecure-Requests: 1',
-                'Cache-Control: max-age=0'
+                'Accept-Language: fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+                'sec-ch-ua: "Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                'sec-ch-ua-mobile: ?0',
+                'sec-ch-ua-platform: "Windows"',
+                'sec-fetch-dest: document',
+                'sec-fetch-mode: navigate',
+                'sec-fetch-site: cross-site',
+                'sec-fetch-user: ?1',
+                'upgrade-insecure-requests: 1',
+                'cache-control: max-age=0'
             ]
         ]);
 
@@ -338,7 +348,7 @@ final class NativeFullContentExtension extends Minz_Extension {
                 if ($curlError !== '') {
                     $debugInfo['error'] = 'Erreur réseau cURL : ' . $curlError;
                 } else {
-                    $debugInfo['error'] = 'Le serveur distant a renvoyé un code HTTP ' . $httpCode;
+                    $debugInfo['error'] = 'Le serveur distant a renvoyé un code HTTP ' . $httpCode . ' (' . $host . ')';
                 }
             }
             return '';
