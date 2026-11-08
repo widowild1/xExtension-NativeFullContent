@@ -8,11 +8,14 @@ on:
 jobs:
   bump-readability:
     runs-on: docker
-    container:
-      image: composer:2
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
+
+      - name: Installer PHP et Composer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq php-cli php-curl php-xml php-mbstring git unzip composer
 
       - name: Mettre à jour fivefilters/readability.php
         run: |
