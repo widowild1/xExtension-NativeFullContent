@@ -9,14 +9,26 @@ jobs:
   deploy:
     runs-on: native
     steps:
-      - name: Deploy to LXC via SSH
-        uses: https://github.com/appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.LXC_HOST }}
-          username: root
-          key: ${{ secrets.LXC_SSH_KEY }}
-          script: |
+      - name: Deploy to LXC via Native SSH
+        env:
+          SSH_KEY: ${{ secrets.LXC_SSH_KEY }}
+          LXC_HOST: ${{ secrets.LXC_HOST }}
+        run: |
+          if [ -z "$LXC_HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "ERREUR : Les secrets LXC_HOST ou LXC_SSH_KEY ne sont pas configurés dans Forgejo."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key root@"$LXC_HOST" << 'EOF'
+            set -e
             cd /opt/freshrss/extensions/xExtension-NativeFullContent
             git config --global --add safe.directory /opt/freshrss/extensions/xExtension-NativeFullContent
             git pull origin main
             chown -R www-data:www-data /opt/freshrss/extensions/xExtension-NativeFullContent
+          EOF
+
+          rm -f ~/.ssh/deploy_key
