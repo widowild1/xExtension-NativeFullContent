@@ -21,6 +21,25 @@ jobs:
         run: |
           composer update fivefilters/readability.php --no-interaction --optimize-autoloader --no-dev
 
+      - name: Vérifier la syntaxe PHP (Lint)
+        run: |
+          echo "Vérification syntaxique de l'extension et des dépendances..."
+          find . -name "*.php" -not -path "./vendor/*" -exec php -l {} \;
+          # Test unitaire rapide sur l'autoloader généré
+          php -r 'require "vendor/autoload.php";'
+
+      - name: Contrôle de sécurité et fuite de données sensibles
+        run: |
+          echo "Audit de détection de données privées..."
+          FORBIDDEN_PATTERNS="noctua\.local|192\.168\.|10\.[0-9]+\.|172\.(1[6-9]|2[0-9]|3[01])\.|ghp_[a-zA-Z0-9]{36}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY"
+          
+          # Vérifier les modifications non indexées et indexées
+          if git diff | grep -E -q "$FORBIDDEN_PATTERNS"; then
+            echo "ERREUR DE SÉCURITÉ : Donnée sensible détectée dans les modifications !"
+            git diff | grep -E -C 2 "$FORBIDDEN_PATTERNS"
+            exit 1
+          fi
+
       - name: Valider et pousser les modifications sur Forgejo
         run: |
           if [ -n "$(git status --porcelain composer.json composer.lock vendor/)" ]; then
