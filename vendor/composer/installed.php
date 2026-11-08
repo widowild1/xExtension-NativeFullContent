@@ -3,7 +3,7 @@
         'name' => 'freshrss/native-full-content',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '5d1aba4a45a679d7637b5ca69e7d644eb2678fcd',
+        'reference' => 'c237e70f2a631e00d20a6ff18f6e8043cf646ed1',
         'type' => 'library',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -22,7 +22,7 @@
         'freshrss/native-full-content' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => '5d1aba4a45a679d7637b5ca69e7d644eb2678fcd',
+            'reference' => 'c237e70f2a631e00d20a6ff18f6e8043cf646ed1',
             'type' => 'library',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
